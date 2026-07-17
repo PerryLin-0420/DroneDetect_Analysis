@@ -1,0 +1,27 @@
+# Claude Code local settings/session data
+.claude/
+
+# Raw & converted dataset (large binary files, not meant for git)
+*.dat
+*.parquet
+*.zip
+DroneDetect_V2_parquet/
+
+# DuckDB summary layer: build scripts + generated db kept local only
+Summary_duckdb/
+*.duckdb
+*.duckdb.wal
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/

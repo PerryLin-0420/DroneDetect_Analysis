@@ -159,7 +159,9 @@ Using the `run_index` dimension, split the `summary` table into two comparison l
 ## 5. Known Data Anomalies (found during integrity verification)
 
 - **`drone_id` must come from the folder name, not the filename prefix**: files inside `MP1_*` folders are actually prefixed `MA1` (e.g. `MA1_0110_02.dat`), and files inside `MP2_*` folders are prefixed `MAV` (e.g. `MAV_0110_01.dat`) — inconsistent with the folder name. The other 5 models (AIR/DIS/INS/MIN/PHA) are consistent. The `summary` table's `drone_id` must be built from the folder name to avoid mis-grouping via the filename prefix.
-- **`CLEAN/PHA_FY` and `BLUE/PHA_FY` are entirely missing (0 files)**: the Phantom has no "flying" recordings under "no interference" or "Bluetooth only" — only `WIFI/PHA_FY` and `BOTH/PHA_FY` exist, 5 files each. Apart from these two, every `(drone, interference, flight_mode)` combination has exactly 5 repeats. In cross-group comparison, the Phantom FY condition only has WiFi/Both interference and cannot be compared against a Clean/Bluetooth baseline.
+- **`DIS` (Parrot Disco) has no HO (hovering) mode**: the Disco is fixed-wing and cannot hover, so it only has `_ON` and `_FY` modes — 40 rows (4 interference × 2 modes × 5 runs). For flight_mode comparison, DIS only offers ON/FY, no HO.
+- **`CLEAN/PHA_FY` and `BLUE/PHA_FY` are entirely missing (0 files)**: the Phantom has no "flying" recordings under "no interference" or "Bluetooth only" — only `WIFI/PHA_FY` and `BOTH/PHA_FY` exist, 5 files each, 50 rows total. In cross-group comparison, the Phantom FY condition only has WiFi/Both interference and cannot be compared against a Clean/Bluetooth baseline.
+- **Row count per model (verified from the summary)**: AIR/INS/MIN/MP1/MP2 have 60 each (full 4×3×5), DIS 40, PHA 50, totalling 390. The only departures from full coverage are the DIS and PHA cases above; every other combination has exactly 5 repeats.
 
 ## 6. Integrity Verification Results
 

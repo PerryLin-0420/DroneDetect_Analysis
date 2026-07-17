@@ -7,8 +7,10 @@
 *.zip
 DroneDetect_V2_parquet/
 
-# DuckDB summary layer: build scripts + generated db kept local only
-Summary_duckdb/
+# DuckDB summary layer: build script + generated db stay local;
+# only the small exported summary parquet (~69KB) is committed
+Summary_duckdb/*
+!Summary_duckdb/summary.parquet
 *.duckdb
 *.duckdb.wal
 

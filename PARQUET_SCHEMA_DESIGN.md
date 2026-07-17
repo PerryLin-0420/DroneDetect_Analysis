@@ -159,7 +159,9 @@
 ## 5. 已知資料異常（完整性驗證時發現）
 
 - **`drone_id` 必須以資料夾名稱為準，不能用檔名前綴解析**：`MP1_*` 資料夾內的檔名前綴實際是 `MA1`（如 `MA1_0110_02.dat`），`MP2_*` 資料夾內的檔名前綴實際是 `MAV`（如 `MAV_0110_01.dat`），與資料夾名稱不一致。其餘 5 種型號（AIR/DIS/INS/MIN/PHA）資料夾與檔名前綴一致。`summary` 表的 `drone_id` 欄位建立時需固定用資料夾名稱，避免誤用檔名前綴分組。
-- **`CLEAN/PHA_FY` 與 `BLUE/PHA_FY` 完全缺漏（0 個檔案）**：Phantom 在「無干擾」與「僅 Bluetooth 干擾」下的「飛行中」條件沒有錄製資料，只有 `WIFI/PHA_FY`、`BOTH/PHA_FY` 各 5 個檔案。除了這兩個組合，其餘所有 `(drone, interference, flight_mode)` 組合都剛好是 5 次重複錄製。做跨組別比較時，Phantom 的 FY 條件只能拿到 WiFi/Both 兩種干擾，無法比較 Clean/Bluetooth 基準。
+- **`DIS`（Parrot Disco）沒有 HO（懸停）模式**：Disco 是固定翼機（fixed-wing），無法定點懸停，所以只有 `_ON` 與 `_FY` 兩種飛行模式，共 40 列（4 干擾 × 2 模式 × 5 run）。做 flight_mode 比較時，DIS 只有 ON/FY 可比，沒有 HO。
+- **`CLEAN/PHA_FY` 與 `BLUE/PHA_FY` 完全缺漏（0 個檔案）**：Phantom 在「無干擾」與「僅 Bluetooth 干擾」下的「飛行中」條件沒有錄製資料，只有 `WIFI/PHA_FY`、`BOTH/PHA_FY` 各 5 個檔案，共 50 列。做跨組別比較時，Phantom 的 FY 條件只能拿到 WiFi/Both 兩種干擾，無法比較 Clean/Bluetooth 基準。
+- **各型號列數（已由 summary 驗證）**：AIR/INS/MIN/MP1/MP2 各 60（滿配 4×3×5）、DIS 40、PHA 50，合計 390。滿配以外的缺漏僅上述 DIS 與 PHA 兩處，其餘組合都剛好 5 次重複錄製。
 
 ## 6. 完整性驗證結果
 

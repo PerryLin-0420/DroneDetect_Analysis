@@ -94,6 +94,7 @@ verify/     scripts + results   # 魯棒性與模型比較驗證
 - [session_leakage.py](verify/scripts/session_leakage.py)：對 CNN embedding 與 PSD 特徵做線性 probe（GroupKFold 以錄製為單位），預測 `drone_id` / `run_index` / `interference` / `flight_mode`，並計算兩表示的 CKA——檢驗各表示實際編碼了什麼。
 - [cnn_interference_transfer.py](verify/scripts/cnn_interference_transfer.py)：對每個干擾條件（runs 0–3）各訓練一個模型並測試所有條件，CNN 與 LDA 用同一協議——公平比較 CNN vs PSD 的跨干擾魯棒性。4 個 CNN 權重存到 `CNN/models/`。
 - [segment_length_sweep.py](verify/scripts/segment_length_sweep.py)：掃描觀測窗長度 0.39 ms 到 50 ms（切 spectrogram 時間軸——平均 k 個 column *即是* k·0.39 ms 窗的 Welch PSD），以 leave-one-run-out + Monte Carlo 隨機窗量測各長度的單窗 LDA 準確率。回答「窗可以多短」。
+- [multiwindow_voting.py](verify/scripts/multiwindow_voting.py)：把觀測預算切成 V 個不重疊短窗，各自分類後以 hard/soft vote 聚合——在相同總觀測時間下與單一長窗對照。
 
 ## 目前主要發現
 
@@ -173,7 +174,16 @@ verify/     scripts + results   # 魯棒性與模型比較驗證
 
 - **即使 0.39 ms 也帶有大量資訊**——單一 spectrogram column 就達 0.66（chance 0.14）。
 - **報酬遞減約在 12–25 ms 出現**：12.5 ms → 0.92、25 ms → 0.95，翻倍到 50 ms 只多約 1.5 個百分點。實用甜蜜點：**約 12.5 ms 達低延遲 ≈0.92**、**約 25 ms 達 ≈0.95**。
-- 此處準確率略為低估（256-bin PSD；原生 1024-bin PSD 在 50 ms 達 0.97）。多窗多數決（觀測稍長、取多個獨立窗聚合）可讓短窗準確率再提升，因為窗間錯誤大致獨立。
+- 此處準確率略為低估（256-bin PSD；原生 1024-bin PSD 在 50 ms 達 0.97）。
+
+### 單一長窗 vs. 多個短窗投票
+
+把固定的觀測預算花在 V 個不重疊短窗（各自分類後投票），而非一個長窗：
+
+- **soft voting（平均類別機率）勝過 hard voting（多數決類別）**，各預算下約高 0.5–1 個百分點——若要投票就用 soft。
+- **但在相同總觀測時間下，單一長窗仍 ≥ 多窗投票**。單一 25 ms 窗（0.95）等同於 12.5 ms × 3 票（37.5 ms，0.948）或 6.25 ms × 7 票（43.8 ms，0.945）需要*更長*時間才達到的準確率。基本窗越短，投票曲線飽和越低（3.1 ms × N 飽和於約 0.92）。
+- **原因**：對 PSD 而言，長窗的 Welch 平均是「特徵層聚合」，直接降低頻譜估計方差且保留全部資訊；投票是「決策層聚合」，每個短窗已先損失頻譜穩定度，投票無法完全補回。此處特徵層聚合 ≥ 決策層聚合。
+- **實務結論**：連續且乾淨的觀測下，優先用單一長窗（約 25 ms 達 ~0.95、約 12.5 ms 達 ~0.92）。多窗投票的價值場景在於觀測斷續（跳頻/突發訊號）或需對抗單一窗被污染時——此時用 soft voting。
 
 ### 誠實聲明（caveats）
 
@@ -188,7 +198,7 @@ verify/     scripts + results   # 魯棒性與模型比較驗證
 4. ~~Spectrogram CNN + 預測 agreement/McNemar/ensemble 比較~~ ✔
 5. ~~Session leakage probing + CKA~~ ✔（無 run-level 指紋）
 6. ~~CNN 干擾遷移矩陣 vs. LDA~~ ✔（假設被推翻：單條件 CNN 遷移比線性 PSD baseline 更差）
-7. ~~最短窗長度 sweep~~ ✔（約 12.5 ms → 0.92、約 25 ms → 0.95；之後報酬遞減）
+7. ~~最短窗長度 sweep + 多窗投票~~ ✔（約 12.5 ms → 0.92、約 25 ms → 0.95；相同時間下單一長窗 ≥ 投票）
 8. 後續：spectrogram 的 Grad-CAM 歸因、增益擾動壓力測試，以及（選配）更高頻率解析度的 CNN 重跑以縮小 MP1/MP2 差距。
 
 **目前整體結論：** 綜觀所有階段（baseline、模型比較、probing、干擾遷移），在此資料集上，PSD 頻譜形狀搭配線性/低容量模型是最強、最魯棒的無人機機型分類器。CNN 學到互補線索（McNemar 顯著、CKA 低、ensemble 有增益），但在準確率與跨干擾魯棒性上都未勝出。最難的殘留問題是同家族的 MP1↔MP2。部署層級的泛化問題（機型 ≡ session）在此結構上仍無法回答。

@@ -94,6 +94,7 @@ verify/     scripts + results   # robustness & model-comparison checks
 - [session_leakage.py](verify/scripts/session_leakage.py): linear probes (GroupKFold by recording) on CNN embeddings and PSD features for `drone_id` / `run_index` / `interference` / `flight_mode`, plus CKA between the two representations — tests what each representation actually encodes.
 - [cnn_interference_transfer.py](verify/scripts/cnn_interference_transfer.py): trains one model per interference condition (runs 0–3) and tests on every condition, for both CNN and LDA under one protocol — a fair CNN-vs-PSD cross-interference robustness comparison. Saves the 4 CNN weights to `CNN/models/`.
 - [segment_length_sweep.py](verify/scripts/segment_length_sweep.py): sweeps the observation-window length from 0.39 ms to 50 ms (by slicing the spectrogram time axis — a k-column average *is* the Welch PSD of a k·0.39 ms window) and measures single-window LDA accuracy at each length via leave-one-run-out + Monte-Carlo random windows. Answers "how short can the window be?".
+- [multiwindow_voting.py](verify/scripts/multiwindow_voting.py): splits the budget into V non-overlapping short windows, classifies each, and combines by hard/soft vote — compared against one long window at equal total observation time.
 
 ## Key findings so far
 
@@ -173,7 +174,16 @@ Single-window LDA accuracy (leave-one-run-out, all interference pooled, 256-bin 
 
 - **Even 0.39 ms carries a lot** — a single spectrogram column already reaches 0.66 (chance 0.14).
 - **Diminishing returns set in around 12–25 ms**: 12.5 ms → 0.92, 25 ms → 0.95, and doubling to 50 ms buys only ~1.5 more points. Practical sweet spots: **~12.5 ms for a low-latency ≈0.92**, **~25 ms for ≈0.95**.
-- Accuracy here is a slight underestimate (256-bin PSD; the native 1024-bin PSD reaches 0.97 at 50 ms). Multi-window majority voting over a slightly longer observation would push the short-window accuracy higher still, since window errors are largely independent.
+- Accuracy here is a slight underestimate (256-bin PSD; the native 1024-bin PSD reaches 0.97 at 50 ms).
+
+### One long window vs. several short windows that vote
+
+Spending a fixed observation budget on V non-overlapping short windows (classify each, then vote) instead of one long window:
+
+- **Soft voting (averaging class probabilities) beats hard voting (majority class)** by ~0.5–1 point at every budget — if you vote, average probabilities.
+- **But at equal total observation time, one long window is still ≥ multi-window voting.** A single 25 ms window (0.95) matches what 12.5 ms × 3 votes (37.5 ms, 0.948) or 6.25 ms × 7 votes (43.8 ms, 0.945) need *more* time to reach. The shorter the base window, the lower the voting curve saturates (3.1 ms × N plateaus near 0.92).
+- **Why:** for PSD, a long window's Welch averaging is feature-level aggregation that directly lowers the spectral-estimate variance while keeping all the information; voting is decision-level aggregation after each short window has already lost spectral stability, so it cannot fully recover. Feature-level ≥ decision-level here.
+- **Practical takeaway:** with continuous clean observation, prefer a single long window (≈25 ms for ~0.95, ≈12.5 ms for ~0.92). Multi-window voting earns its keep only when observation is intermittent (hopping/bursty signal) or robustness to a single corrupted window matters — then use soft voting.
 
 ### Honest caveats
 
@@ -188,7 +198,7 @@ Single-window LDA accuracy (leave-one-run-out, all interference pooled, 256-bin 
 4. ~~Spectrogram CNN + prediction agreement/McNemar/ensemble comparison~~ ✔
 5. ~~Session-leakage probing + CKA~~ ✔ (no run-level fingerprint)
 6. ~~CNN interference-transfer matrix vs. LDA~~ ✔ (hypothesis refuted: single-condition CNN transfers worse than linear PSD baseline)
-7. ~~Minimum-window-length sweep~~ ✔ (≈12.5 ms → 0.92, ≈25 ms → 0.95; diminishing returns beyond)
+7. ~~Minimum-window-length sweep + multi-window voting~~ ✔ (≈12.5 ms → 0.92, ≈25 ms → 0.95; one long window ≥ voting at equal time)
 8. Remaining: Grad-CAM attribution on spectrograms, gain-perturbation stress test, and (optional) higher-frequency-resolution CNN re-run to close the MP1/MP2 gap.
 
 **Overall conclusion so far:** across every stage — baselines, model comparison, probing, and interference transfer — PSD spectral shape with a linear/low-capacity model is the strongest, most robust drone-model classifier on this dataset. The CNN learns complementary cues (significant McNemar, low CKA, ensemble gain) but does not win on accuracy or cross-interference robustness. The hardest residual is the same-family MP1↔MP2 pair. The deployment-level generalisation question (model ≡ session) remains structurally unanswerable here.

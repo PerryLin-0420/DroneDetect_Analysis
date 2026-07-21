@@ -28,8 +28,12 @@ torch.manual_seed(0)
 np.random.seed(0)
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-SPECS_NPY = SCRIPT_DIR / ".." / ".." / "CNN" / "results" / "spectrograms.npy"
-SPEC_META = SCRIPT_DIR / ".." / ".." / "CNN" / "results" / "spectrogram_meta.parquet"
+# frequency bins: optional CLI arg (256 default) selecting which spectrogram set to use
+FREQ_BINS = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else 256
+SUFFIX = "" if FREQ_BINS == 256 else f"_{FREQ_BINS}"
+SPECS_NPY = SCRIPT_DIR / ".." / ".." / "CNN" / "results" / f"spectrograms{SUFFIX}.npy"
+SPEC_META = SCRIPT_DIR / ".." / ".." / "CNN" / "results" / f"spectrogram_meta{SUFFIX}.parquet"
+# LDA always uses its strongest feature (the full 1024-bin PSD) as the fixed baseline
 PSD_FEATURES = SCRIPT_DIR / ".." / ".." / "embedding" / "results" / "psd_features.parquet"
 RESULTS_DIR = SCRIPT_DIR / ".." / "results"
 MODELS_DIR = SCRIPT_DIR / ".." / ".." / "CNN" / "models"  # saved model weights
@@ -93,7 +97,7 @@ def transfer_matrix_cnn(specs, meta):
         tr_mask = ((meta["interference"] == tr_cond) & (meta["run_index"] <= 3)).to_numpy()
         t0 = time.time()
         model = train_cnn(specs[tr_mask], y[tr_mask])
-        ckpt = MODELS_DIR / f"transfer_{tr_cond}.pt"
+        ckpt = MODELS_DIR / f"transfer_{tr_cond}{SUFFIX}.pt"
         torch.save({"state_dict": model.state_dict(), "drone_order": DRONE_ORDER,
                     "train_condition": tr_cond, "epochs": EPOCHS}, ckpt)
         for j, te_cond in enumerate(CONDITIONS):
@@ -153,7 +157,7 @@ def plot_matrices(cnn_acc, lda_acc):
                  "diag=run4 held-out, off-diag=other cond all)",
                  fontsize=11, color=INK, x=0.02, ha="left")
     fig.tight_layout(rect=(0, 0, 1, 0.95))
-    out = RESULTS_DIR / "cnn_vs_lda_interference_transfer.png"
+    out = RESULTS_DIR / f"cnn_vs_lda_interference_transfer{SUFFIX}.png"
     fig.savefig(out, dpi=150, facecolor=SURFACE)
     plt.close(fig)
     print(f"Wrote {out.resolve()}")
@@ -195,14 +199,14 @@ def main():
     print(f"\nCNN: diag {cnn_d[0]:.3f}, off-diag {cnn_d[1]:.3f}, drop {cnn_d[2]:.3f}")
     print(f"LDA: diag {lda_d[0]:.3f}, off-diag {lda_d[1]:.3f}, drop {lda_d[2]:.3f}")
 
-    (RESULTS_DIR / "cnn_vs_lda_interference_transfer.json").write_text(json.dumps({
+    (RESULTS_DIR / f"cnn_vs_lda_interference_transfer{SUFFIX}.json").write_text(json.dumps({
         "conditions": CONDITIONS,
         "cnn_matrix": np.round(cnn_acc, 4).tolist(),
         "lda_matrix": np.round(lda_acc, 4).tolist(),
         "cnn_diag_offdiag_drop": [round(v, 4) for v in cnn_d],
         "lda_diag_offdiag_drop": [round(v, 4) for v in lda_d],
     }, indent=2))
-    print(f"Wrote {(RESULTS_DIR / 'cnn_vs_lda_interference_transfer.json').resolve()}")
+    print(f"Wrote {(RESULTS_DIR / f'cnn_vs_lda_interference_transfer{SUFFIX}.json').resolve()}")
 
 
 if __name__ == "__main__":

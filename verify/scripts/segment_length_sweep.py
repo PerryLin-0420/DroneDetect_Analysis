@@ -24,8 +24,10 @@ sys.stdout.reconfigure(line_buffering=True)
 RNG = np.random.default_rng(0)
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-SPECS_NPY = SCRIPT_DIR / ".." / ".." / "CNN" / "results" / "spectrograms.npy"
-SPEC_META = SCRIPT_DIR / ".." / ".." / "CNN" / "results" / "spectrogram_meta.parquet"
+FREQ_BINS = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else 256
+SUFFIX = "" if FREQ_BINS == 256 else f"_{FREQ_BINS}"
+SPECS_NPY = SCRIPT_DIR / ".." / ".." / "CNN" / "results" / f"spectrograms{SUFFIX}.npy"
+SPEC_META = SCRIPT_DIR / ".." / ".." / "CNN" / "results" / f"spectrogram_meta{SUFFIX}.parquet"
 RESULTS_DIR = SCRIPT_DIR / ".." / "results"
 
 DRONE_ORDER = ["AIR", "DIS", "INS", "MIN", "MP1", "MP2", "PHA"]
@@ -103,7 +105,7 @@ def plot(results):
     for m, a in zip(ms, mean):
         ax.text(m, a + 0.03, f"{a:.2f}", ha="center", fontsize=8, color=INK)
     fig.tight_layout()
-    out = RESULTS_DIR / "segment_length_sweep.png"
+    out = RESULTS_DIR / f"segment_length_sweep{SUFFIX}.png"
     fig.savefig(out, dpi=150, facecolor=SURFACE)
     plt.close(fig)
     print(f"Wrote {out.resolve()}")
@@ -119,9 +121,9 @@ def main():
 
     results = sweep(specs, meta)
     plot(results)
-    (RESULTS_DIR / "segment_length_sweep.json").write_text(json.dumps(
+    (RESULTS_DIR / f"segment_length_sweep{SUFFIX}.json").write_text(json.dumps(
         {"ms_per_frame": MS_PER_FRAME, "n_mc": N_MC, "results": results}, indent=2))
-    print(f"Wrote {(RESULTS_DIR / 'segment_length_sweep.json').resolve()}")
+    print(f"Wrote {(RESULTS_DIR / f'segment_length_sweep{SUFFIX}.json').resolve()}")
 
 
 if __name__ == "__main__":

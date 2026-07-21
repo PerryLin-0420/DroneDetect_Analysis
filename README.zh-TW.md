@@ -93,6 +93,7 @@ verify/     scripts + results   # 魯棒性與模型比較驗證
 - [model_comparison.py](verify/scripts/model_comparison.py)：對齊 LDA / XGBoost / CNN 的逐 segment 預測，報告 pairwise agreement、McNemar 檢定、獨有答對數、三模型多數決 ensemble——檢驗各模型是否學到互補線索。
 - [session_leakage.py](verify/scripts/session_leakage.py)：對 CNN embedding 與 PSD 特徵做線性 probe（GroupKFold 以錄製為單位），預測 `drone_id` / `run_index` / `interference` / `flight_mode`，並計算兩表示的 CKA——檢驗各表示實際編碼了什麼。
 - [cnn_interference_transfer.py](verify/scripts/cnn_interference_transfer.py)：對每個干擾條件（runs 0–3）各訓練一個模型並測試所有條件，CNN 與 LDA 用同一協議——公平比較 CNN vs PSD 的跨干擾魯棒性。4 個 CNN 權重存到 `CNN/models/`。
+- [segment_length_sweep.py](verify/scripts/segment_length_sweep.py)：掃描觀測窗長度 0.39 ms 到 50 ms（切 spectrogram 時間軸——平均 k 個 column *即是* k·0.39 ms 窗的 Welch PSD），以 leave-one-run-out + Monte Carlo 隨機窗量測各長度的單窗 LDA 準確率。回答「窗可以多短」。
 
 ## 目前主要發現
 
@@ -162,6 +163,18 @@ verify/     scripts + results   # 魯棒性與模型比較驗證
 - **CNN 遷移*更差*而非更好**——掉分更大，且每個非對角 cell 都比 LDA 低。probing 階段的預測被推翻。
 - **為何預測失敗**：probe 的干擾不變性來自「見過全部干擾」的 embedding；而遷移模型是各自只在*單一*條件訓練的，設定不同。每個條件僅約 3k segment，高容量 CNN 過擬合訓練條件的頻譜背景，低容量的線性 LDA 反而跨條件泛化更好。這是經典的「小資料 + 分布外 → 簡單模型勝出」現象，也再次印證專案主線：**在此資料集上，PSD + 線性模型是最強且最魯棒的組合。**
 
+### 最短觀測窗長度
+
+單窗 LDA 準確率（leave-one-run-out、混合所有干擾、256-bin PSD）對窗長：
+
+| 窗長 | 0.39 ms | 0.78 ms | 1.6 ms | 3.1 ms | 6.3 ms | 12.5 ms | 25 ms | 50 ms |
+|---|---|---|---|---|---|---|---|---|
+| 準確率 | 0.66 | 0.71 | 0.78 | 0.83 | 0.89 | 0.92 | 0.95 | 0.96 |
+
+- **即使 0.39 ms 也帶有大量資訊**——單一 spectrogram column 就達 0.66（chance 0.14）。
+- **報酬遞減約在 12–25 ms 出現**：12.5 ms → 0.92、25 ms → 0.95，翻倍到 50 ms 只多約 1.5 個百分點。實用甜蜜點：**約 12.5 ms 達低延遲 ≈0.92**、**約 25 ms 達 ≈0.95**。
+- 此處準確率略為低估（256-bin PSD；原生 1024-bin PSD 在 50 ms 達 0.97）。多窗多數決（觀測稍長、取多個獨立窗聚合）可讓短窗準確率再提升，因為窗間錯誤大致獨立。
+
 ### 誠實聲明（caveats）
 
 - **Session confound 在此 dataset 結構上無解**：每個機型很可能是單一 session 錄製，機型 ≡ session。Leave-one-run-out 與上述 probe 都無法排除；run-level probe 只能排除「session 內重複」這一層指紋。跨 SDR / 跨日期泛化未經驗證。
@@ -175,6 +188,7 @@ verify/     scripts + results   # 魯棒性與模型比較驗證
 4. ~~Spectrogram CNN + 預測 agreement/McNemar/ensemble 比較~~ ✔
 5. ~~Session leakage probing + CKA~~ ✔（無 run-level 指紋）
 6. ~~CNN 干擾遷移矩陣 vs. LDA~~ ✔（假設被推翻：單條件 CNN 遷移比線性 PSD baseline 更差）
-7. 後續：spectrogram 的 Grad-CAM 歸因、增益擾動壓力測試，以及（選配）更高頻率解析度的 CNN 重跑以縮小 MP1/MP2 差距。
+7. ~~最短窗長度 sweep~~ ✔（約 12.5 ms → 0.92、約 25 ms → 0.95；之後報酬遞減）
+8. 後續：spectrogram 的 Grad-CAM 歸因、增益擾動壓力測試，以及（選配）更高頻率解析度的 CNN 重跑以縮小 MP1/MP2 差距。
 
 **目前整體結論：** 綜觀所有階段（baseline、模型比較、probing、干擾遷移），在此資料集上，PSD 頻譜形狀搭配線性/低容量模型是最強、最魯棒的無人機機型分類器。CNN 學到互補線索（McNemar 顯著、CKA 低、ensemble 有增益），但在準確率與跨干擾魯棒性上都未勝出。最難的殘留問題是同家族的 MP1↔MP2。部署層級的泛化問題（機型 ≡ session）在此結構上仍無法回答。

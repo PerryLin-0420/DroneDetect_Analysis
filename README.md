@@ -93,6 +93,7 @@ verify/     scripts + results   # robustness & model-comparison checks
 - [model_comparison.py](verify/scripts/model_comparison.py): aligns LDA / XGBoost / CNN per-segment predictions, reports pairwise agreement, McNemar's test, exclusive-correct counts, and a 3-model majority-vote ensemble — tests whether the models learned complementary cues.
 - [session_leakage.py](verify/scripts/session_leakage.py): linear probes (GroupKFold by recording) on CNN embeddings and PSD features for `drone_id` / `run_index` / `interference` / `flight_mode`, plus CKA between the two representations — tests what each representation actually encodes.
 - [cnn_interference_transfer.py](verify/scripts/cnn_interference_transfer.py): trains one model per interference condition (runs 0–3) and tests on every condition, for both CNN and LDA under one protocol — a fair CNN-vs-PSD cross-interference robustness comparison. Saves the 4 CNN weights to `CNN/models/`.
+- [segment_length_sweep.py](verify/scripts/segment_length_sweep.py): sweeps the observation-window length from 0.39 ms to 50 ms (by slicing the spectrogram time axis — a k-column average *is* the Welch PSD of a k·0.39 ms window) and measures single-window LDA accuracy at each length via leave-one-run-out + Monte-Carlo random windows. Answers "how short can the window be?".
 
 ## Key findings so far
 
@@ -162,6 +163,18 @@ Train one model per condition (runs 0–3); diagonal tests the held-out run 4 of
 - **The CNN transfers *worse*, not better** — larger drop and lower accuracy in every off-diagonal cell. The probing-stage prediction is refuted.
 - **Why the prediction failed:** the probe's interference-invariance came from an embedding trained on *all* interference conditions. The transfer models are trained on a *single* condition each, a different setup. With only ~3k segments per condition, the high-capacity CNN overfits the training condition's spectral background, while the low-capacity linear LDA generalises across conditions better. This is the classic "small data + out-of-distribution → simpler model wins" pattern, and it reinforces the project's through-line: **on this dataset, PSD + a linear model is the strongest and most robust combination.**
 
+### Minimum observation-window length
+
+Single-window LDA accuracy (leave-one-run-out, all interference pooled, 256-bin PSD) vs. window length:
+
+| Window | 0.39 ms | 0.78 ms | 1.6 ms | 3.1 ms | 6.3 ms | 12.5 ms | 25 ms | 50 ms |
+|---|---|---|---|---|---|---|---|---|
+| Accuracy | 0.66 | 0.71 | 0.78 | 0.83 | 0.89 | 0.92 | 0.95 | 0.96 |
+
+- **Even 0.39 ms carries a lot** — a single spectrogram column already reaches 0.66 (chance 0.14).
+- **Diminishing returns set in around 12–25 ms**: 12.5 ms → 0.92, 25 ms → 0.95, and doubling to 50 ms buys only ~1.5 more points. Practical sweet spots: **~12.5 ms for a low-latency ≈0.92**, **~25 ms for ≈0.95**.
+- Accuracy here is a slight underestimate (256-bin PSD; the native 1024-bin PSD reaches 0.97 at 50 ms). Multi-window majority voting over a slightly longer observation would push the short-window accuracy higher still, since window errors are largely independent.
+
 ### Honest caveats
 
 - **Session confound is structurally unresolvable in this dataset**: each model was likely recorded in one session, so model ≡ session. Leave-one-run-out and the probes above cannot remove it; the run-level probe only rules out the *within-session repeat* fingerprint. Cross-SDR / cross-day generalisation is unverified.
@@ -175,6 +188,7 @@ Train one model per condition (runs 0–3); diagonal tests the held-out run 4 of
 4. ~~Spectrogram CNN + prediction agreement/McNemar/ensemble comparison~~ ✔
 5. ~~Session-leakage probing + CKA~~ ✔ (no run-level fingerprint)
 6. ~~CNN interference-transfer matrix vs. LDA~~ ✔ (hypothesis refuted: single-condition CNN transfers worse than linear PSD baseline)
-7. Remaining: Grad-CAM attribution on spectrograms, gain-perturbation stress test, and (optional) higher-frequency-resolution CNN re-run to close the MP1/MP2 gap.
+7. ~~Minimum-window-length sweep~~ ✔ (≈12.5 ms → 0.92, ≈25 ms → 0.95; diminishing returns beyond)
+8. Remaining: Grad-CAM attribution on spectrograms, gain-perturbation stress test, and (optional) higher-frequency-resolution CNN re-run to close the MP1/MP2 gap.
 
 **Overall conclusion so far:** across every stage — baselines, model comparison, probing, and interference transfer — PSD spectral shape with a linear/low-capacity model is the strongest, most robust drone-model classifier on this dataset. The CNN learns complementary cues (significant McNemar, low CKA, ensemble gain) but does not win on accuracy or cross-interference robustness. The hardest residual is the same-family MP1↔MP2 pair. The deployment-level generalisation question (model ≡ session) remains structurally unanswerable here.

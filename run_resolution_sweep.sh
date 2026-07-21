@@ -17,6 +17,15 @@ cd "$(dirname "$0")"   # project root
 
 stamp() { date '+%H:%M:%S'; }
 
+# Wait for the separately-running 512-bin baseline to finish (its last artifact
+# is cnn_embeddings_512.npy) before starting, to avoid CPU contention. This lets
+# the whole sweep be launched now (one approval) yet start only once the CPU is free.
+echo "[$(stamp)] waiting for 512-bin baseline training to finish..."
+while [ ! -f CNN/results/cnn_embeddings_512.npy ]; do
+  sleep 60
+done
+echo "[$(stamp)] 512-bin baseline done — CPU free, starting sweep"
+
 echo "[$(stamp)] === [1/6] extract 1024-bin spectrograms ==="
 python CNN/scripts/extract_spectrograms.py 1024
 

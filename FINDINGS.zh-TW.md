@@ -52,8 +52,10 @@
 - **沒有「無人機不在場」的錄製**——支援機型*分類*，非在場*偵測*（後者需外部負樣本）。
 - **256-bin 低估：** 窗長與投票研究重用 256-bin spectrogram；原生 1024-bin PSD 約高 1 個百分點。趨勢不受影響。
 
-## 待辦（加分項）
+## 加分項檢驗
 
-- **Grad-CAM** 對 spectrogram 做歸因——CNN 看的是哪些時頻區域，是訊號還是接收端 artifact。
-- **增益擾動壓力測試**——確認正規化 PSD 在測試時 ±dB 縮放下仍增益不變。
-- **更高頻率解析度 CNN**（512/1024 bins）——再一次嘗試縮小 MP1↔MP2 差距。
+- **增益擾動壓力測試——已完成。** 施加 ±20 dB 的測試時增益，正規化 PSD 全程平坦維持 0.96，未正規化的 raw log-power 則崩潰（−20 dB 為 0.51、+20 dB 為 0.60）。確認正規化使特徵增益不變，符合設計。
+  → [verify/results/gain_perturbation.png](verify/results/gain_perturbation.png)
+- **Grad-CAM——已完成。** 在 clean 訓練的 CNN 上，class activation 落在各機型佔用的頻帶，**而非** 0 MHz 的 DC/LO-leakage 線——模型看的是訊號，不是接收端 artifact。各機型有不同頻譜足跡（AIR 在 ±25 MHz 邊帶、INS 中心窄帶、MP1/MP2 在 ±5–10 MHz），這正是可分性來源；MP1 仍被誤判為 MP2。
+  → [CNN/results/gradcam.png](CNN/results/gradcam.png)
+- **更高頻率解析度 CNN（512 bins）——進行中**——再一次嘗試縮小 MP1↔MP2 差距。

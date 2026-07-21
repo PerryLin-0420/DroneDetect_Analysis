@@ -97,6 +97,8 @@ verify/     scripts + results   # 魯棒性與模型比較驗證
 - [cnn_interference_transfer.py](verify/scripts/cnn_interference_transfer.py)：對每個干擾條件（runs 0–3）各訓練一個模型並測試所有條件，CNN 與 LDA 用同一協議——公平比較 CNN vs PSD 的跨干擾魯棒性。4 個 CNN 權重存到 `CNN/models/`。
 - [segment_length_sweep.py](verify/scripts/segment_length_sweep.py)：掃描觀測窗長度 0.39 ms 到 50 ms（切 spectrogram 時間軸——平均 k 個 column *即是* k·0.39 ms 窗的 Welch PSD），以 leave-one-run-out + Monte Carlo 隨機窗量測各長度的單窗 LDA 準確率。回答「窗可以多短」。
 - [multiwindow_voting.py](verify/scripts/multiwindow_voting.py)：把觀測預算切成 V 個不重疊短窗，各自分類後以 hard/soft vote 聚合——在相同總觀測時間下與單一長窗對照。
+- [gain_perturbation.py](verify/scripts/gain_perturbation.py)：施加 ±dB 測試時增益，比較正規化 vs 未正規化 PSD 的準確率——確認正規化增益不變。
+- [CNN/scripts/gradcam.py](CNN/scripts/gradcam.py)：對 CNN 最後 conv 層做 Grad-CAM，疊在每個機型的一張 clean spectrogram 上——顯示模型是看訊號頻帶還是接收端 artifact。
 
 ## 目前主要發現
 
@@ -201,6 +203,7 @@ verify/     scripts + results   # 魯棒性與模型比較驗證
 5. ~~Session leakage probing + CKA~~ ✔（無 run-level 指紋）
 6. ~~CNN 干擾遷移矩陣 vs. LDA~~ ✔（假設被推翻：單條件 CNN 遷移比線性 PSD baseline 更差）
 7. ~~最短窗長度 sweep + 多窗投票~~ ✔（約 12.5 ms → 0.92、約 25 ms → 0.95；相同時間下單一長窗 ≥ 投票）
-8. 後續：spectrogram 的 Grad-CAM 歸因、增益擾動壓力測試，以及（選配）更高頻率解析度的 CNN 重跑以縮小 MP1/MP2 差距。
+8. ~~Grad-CAM 歸因 + 增益擾動壓力測試~~ ✔（CNN 看訊號頻帶而非 DC artifact；正規化 PSD 在 ±20 dB 內增益不變）
+9. 進行中：更高頻率解析度（512-bin）CNN 重跑，嘗試縮小 MP1/MP2 差距。
 
 **目前整體結論：** 綜觀所有階段（baseline、模型比較、probing、干擾遷移），在此資料集上，PSD 頻譜形狀搭配線性/低容量模型是最強、最魯棒的無人機機型分類器。CNN 學到互補線索（McNemar 顯著、CKA 低、ensemble 有增益），但在準確率與跨干擾魯棒性上都未勝出。最難的殘留問題是同家族的 MP1↔MP2。部署層級的泛化問題（機型 ≡ session）在此結構上仍無法回答。

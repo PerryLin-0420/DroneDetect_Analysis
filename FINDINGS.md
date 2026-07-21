@@ -81,11 +81,18 @@ PSD + LDA wins on every axis that matters here.
 - **256-bin underestimate:** the window-length and voting studies reuse the 256-bin
   spectrogram; native 1024-bin PSD is ~1 pt higher. Trends are unaffected.
 
-## Pending (additive)
+## Additive checks
 
-- **Grad-CAM** attribution on spectrograms — which time-frequency regions drive the
-  CNN, and does it look at signal or receiver artifacts.
-- **Gain-perturbation stress test** — confirm the normalized PSD is gain-invariant
-  under ±dB test-time scaling.
-- **Higher-frequency-resolution CNN** (512/1024 bins) — one more attempt to close
-  the MP1↔MP2 gap.
+- **Gain-perturbation stress test — done.** Applying ±20 dB of test-time gain, the
+  normalized PSD stays flat at 0.96 across the whole range while the un-normalized
+  raw log-power collapses (0.51 at −20 dB, 0.60 at +20 dB). Confirms the
+  normalization makes the feature gain-invariant, as intended.
+  → [verify/results/gain_perturbation.png](verify/results/gain_perturbation.png)
+- **Grad-CAM — done.** On the clean-trained CNN, class activation lands on each
+  drone's occupied frequency bands, **not** on the DC/LO-leakage line at 0 MHz —
+  the model keys on the signal, not a receiver artifact. Each model shows a distinct
+  spectral footprint (AIR at ±25 MHz edges, INS a narrow centre band, MP1/MP2 around
+  ±5–10 MHz), which is the source of separability; MP1 is still misread as MP2.
+  → [CNN/results/gradcam.png](CNN/results/gradcam.png)
+- **Higher-frequency-resolution CNN (512 bins) — in progress** — one more attempt to
+  close the MP1↔MP2 gap.

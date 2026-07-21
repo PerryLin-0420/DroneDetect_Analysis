@@ -19,16 +19,19 @@ sys.stdout.reconfigure(line_buffering=True)
 SCRIPT_DIR = Path(__file__).resolve().parent
 PARQUET_ROOT = SCRIPT_DIR / ".." / ".." / "DroneDetect_V2_parquet"
 RESULTS_DIR = SCRIPT_DIR / ".." / "results"
-OUT_SPECS = RESULTS_DIR / "spectrograms.npy"        # (N, 256, 128) float16
-OUT_META = RESULTS_DIR / "spectrogram_meta.parquet" # N rows, same order
 
 SAMPLE_RATE_HZ = 60_000_000
 SEGMENT_SAMPLES = 3_000_000      # 50 ms
 NPERSEG = 1024
 HOP = 512
-FREQ_BINS = 256                  # 1024 -> 256 (mean-pool x4, ~234 kHz/bin)
+# frequency bins: optional CLI arg (256 default); 512/1024 for a higher-resolution run
+FREQ_BINS = int(sys.argv[1]) if len(sys.argv) > 1 else 256   # 1024 -> N (mean-pool x 1024/N)
 TIME_BINS = 128                  # ~5858 frames -> 128 (mean-pool x45, ~390 us/bin)
 CLIP_THRESHOLD = 0.99
+_SUFFIX = "" if FREQ_BINS == 256 else f"_{FREQ_BINS}"  # keep 256 filenames unchanged
+
+OUT_SPECS = RESULTS_DIR / f"spectrograms{_SUFFIX}.npy"        # (N, FREQ_BINS, 128) float16
+OUT_META = RESULTS_DIR / f"spectrogram_meta{_SUFFIX}.parquet" # N rows, same order
 
 INTERFERENCE_TEXT = {"CLEAN": "clean", "BLUE": "bluetooth", "WIFI": "wifi", "BOTH": "bluetooth_wifi"}
 

@@ -59,7 +59,7 @@ verify_parquet_conversion.py    # bit-exact 轉換驗證
 Summary_duckdb/summary.parquet  # 每錄製一列的 390 列 summary 表（進版控）
 EDA/        scripts + results   # summary 特徵的 box plot
 embedding/  scripts + results   # 50 ms PSD 特徵 + LDA/XGBoost baseline
-CNN/        scripts + results   # （下一階段）spectrogram CNN
+CNN/        scripts + results   # spectrogram 萃取 + 小型 2D CNN
 verify/     scripts + results   # 魯棒性與模型比較驗證
 ```
 
@@ -82,9 +82,15 @@ verify/     scripts + results   # 魯棒性與模型比較驗證
 - [extract_psd_features.py](embedding/scripts/extract_psd_features.py)：每檔切成 40 × 50 ms segment，每段算 1024-bin 雙邊 Welch PSD，總功率正規化為 1（增益不變的頻譜「形狀」）後轉 dB。共 15,591 列。
 - [baseline_classify.py](embedding/scripts/baseline_classify.py)：leave-one-run-out CV（以 `run_index` 切 5 fold，同一錄製的 segment 不跨集）、LDA + XGBoost、排除飽和 segment（`clip_ratio > 5%`）。
 
-### 5. 驗證（[verify/](verify)）
+### 5. Spectrogram CNN（[CNN/](CNN)）
+
+- [extract_spectrograms.py](CNN/scripts/extract_spectrograms.py)：沿用 50 ms segment → STFT（nperseg 1024、hop 512、雙邊），在線性 power 域 mean-pool 到 256(F)×128(T) 網格後轉 dB，存成 float16（約 1 GB，不進版控）。
+- [train_cnn.py](CNN/scripts/train_cnn.py)：約 20 萬參數的 4 層 2D CNN、per-segment z-score（去增益，log 域中增益為加性常數）、time-roll + 雜訊 augmentation、leave-one-run-out CV。以 CPU 訓練（無 CUDA GPU；GPU 只影響速度不影響結果）。輸出預測與 128 維 embedding 供比較階段使用。
+
+### 6. 驗證（[verify/](verify)）
 
 - [interference_transfer.py](verify/scripts/interference_transfer.py)：4×4「訓練條件 × 測試條件」準確率矩陣——量化準確率中有多少依賴環境頻譜背景、多少來自無人機訊號本身。
+- [model_comparison.py](verify/scripts/model_comparison.py)：對齊 LDA / XGBoost / CNN 的逐 segment 預測，報告 pairwise agreement、McNemar 檢定、獨有答對數、三模型多數決 ensemble——檢驗各模型是否學到互補線索。
 
 ## 目前主要發現
 
@@ -104,6 +110,17 @@ verify/     scripts + results   # 魯棒性與模型比較驗證
 
 - 7 機型的頻譜形狀近乎線性可分；唯一有意義的混淆是 **MP1 ↔ MP2**（7–8%，同家族 OcuSync 圖傳）。
 - 非線性模型在 PSD 特徵上沒有增益——剩餘進步空間在時頻結構。
+
+### Spectrogram CNN vs. PSD baseline
+
+| 模型 | Segment 準確率 | Recording 準確率 |
+|---|---|---|
+| LDA（PSD，線性） | **0.972** | **1.000** |
+| XGBoost（PSD） | 0.969 | 0.987 |
+| CNN（spectrogram） | 0.946 | 0.977 |
+
+- CNN **沒有勝過線性 PSD baseline**，且 MP2→MP1 混淆惡化到 16%。最可能原因是頻率解析度：池化後的 spectrogram 只有 256 bins（~234 kHz/bin），PSD 則有 1024 bins（~58.6 kHz/bin），區分同家族機型所需的細頻率結構被池化掉了。
+- **但 CNN 學到的是互補資訊，不是劣化版**。McNemar 檢定：CNN vs. 任一 PSD 模型都極顯著（p ≈ 1e-30…1e-37），而 LDA vs. XGBoost 不顯著（p ≈ 0.05）。CNN 獨立答對約 300 個 PSD 模型漏掉的 segment，三模型多數決達 **0.980**，高於任何單一模型。結論：**PSD 頻譜形狀是主判別訊號，時頻結構是次要且正交的補充線索。**
 
 ### 干擾遷移魯棒性（LDA）
 
@@ -126,5 +143,6 @@ verify/     scripts + results   # 魯棒性與模型比較驗證
 1. ~~無損轉換 + 驗證~~ ✔
 2. ~~Summary DB + EDA + 資料品質稽核~~ ✔
 3. ~~PSD embedding + 線性/GBM baseline + 干擾遷移檢驗~~ ✔
-4. **下一步——CNN 階段**（`CNN/`）：log-magnitude STFT spectrogram（50 ms segment）、小型 2D CNN，目標是解開 MP1/MP2 混淆並提升跨條件魯棒性。
-5. 模型比較（`verify/`）：預測 agreement/McNemar、embedding CKA、session/干擾 leakage probing、Grad-CAM 歸因、增益擾動壓力測試。
+4. ~~Spectrogram CNN + 預測 agreement/McNemar/ensemble 比較~~ ✔
+5. **下一步——session leakage 驗證**（`verify/`）：對 CNN embedding 做 probing（預測 `run_index` / `interference`）+ embedding CKA，回答模型學的是機型還是 per-session 指紋。
+6. 後續：spectrogram 的 Grad-CAM 歸因、CNN 干擾遷移矩陣、增益擾動壓力測試，以及（選配）更高頻率解析度的 CNN 重跑。

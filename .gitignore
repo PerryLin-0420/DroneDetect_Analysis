@@ -17,6 +17,9 @@ Summary_duckdb/*
 # Long extraction/build logs (regenerable)
 *_log.txt
 
+# Large binary feature tensors (regenerable from raw parquet)
+*.npy
+
 # Python
 __pycache__/
 *.pyc

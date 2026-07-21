@@ -59,7 +59,7 @@ verify_parquet_conversion.py    # bit-exact conversion verification
 Summary_duckdb/summary.parquet  # 390-row per-recording summary table (committed)
 EDA/        scripts + results   # box plots of summary features
 embedding/  scripts + results   # 50 ms PSD features + LDA/XGBoost baselines
-CNN/        scripts + results   # (next stage) spectrogram CNN
+CNN/        scripts + results   # spectrogram extraction + small 2D CNN
 verify/     scripts + results   # robustness & model-comparison checks
 ```
 
@@ -82,9 +82,15 @@ verify/     scripts + results   # robustness & model-comparison checks
 - [extract_psd_features.py](embedding/scripts/extract_psd_features.py): slices each recording into 40 × 50 ms segments, computes a 1024-bin two-sided Welch PSD per segment, normalises total power to 1 (gain-invariant spectral shape) then converts to dB. 15,591 segment rows.
 - [baseline_classify.py](embedding/scripts/baseline_classify.py): leave-one-run-out CV (5 folds by `run_index`; segments of one recording never straddle folds), LDA + XGBoost, saturated segments (`clip_ratio > 5%`) excluded.
 
-### 5. Verification ([verify/](verify))
+### 5. Spectrogram CNN ([CNN/](CNN))
+
+- [extract_spectrograms.py](CNN/scripts/extract_spectrograms.py): same 50 ms segments → STFT (nperseg 1024, hop 512, two-sided), mean-pooled in the linear power domain to a 256(F)×128(T) grid, then dB, stored as float16 (~1 GB, not committed).
+- [train_cnn.py](CNN/scripts/train_cnn.py): ~200k-param 4-block 2D CNN, per-segment z-score (removes gain — additive in log domain), time-roll + noise augmentation, leave-one-run-out CV. CPU-trained (no CUDA GPU present; GPU only changes speed, not results). Exports predictions + 128-d embeddings for the comparison stage.
+
+### 6. Verification ([verify/](verify))
 
 - [interference_transfer.py](verify/scripts/interference_transfer.py): 4×4 train-condition × test-condition accuracy matrix — measures how much of the accuracy relies on ambient spectrum context vs. the drone signal itself.
+- [model_comparison.py](verify/scripts/model_comparison.py): aligns LDA / XGBoost / CNN per-segment predictions, reports pairwise agreement, McNemar's test, exclusive-correct counts, and a 3-model majority-vote ensemble — tests whether the models learned complementary cues.
 
 ## Key findings so far
 
@@ -104,6 +110,17 @@ verify/     scripts + results   # robustness & model-comparison checks
 
 - Spectral shape is almost linearly separable across the 7 models; the only meaningful confusion is **MP1 ↔ MP2** (7–8%, same-family OcuSync downlinks).
 - Non-linearity adds nothing on PSD features — the remaining headroom is in time-frequency structure.
+
+### Spectrogram CNN vs. PSD baseline
+
+| Model | Segment acc | Recording acc |
+|---|---|---|
+| LDA (PSD, linear) | **0.972** | **1.000** |
+| XGBoost (PSD) | 0.969 | 0.987 |
+| CNN (spectrogram) | 0.946 | 0.977 |
+
+- The CNN **does not beat the linear PSD baseline**, and MP2→MP1 confusion actually worsens to 16%. The most likely cause is frequency resolution: the pooled spectrogram has 256 bins (~234 kHz/bin) vs. the PSD's 1024 bins (~58.6 kHz/bin), so the fine spectral detail that separates same-family models was pooled away.
+- **But the CNN learns complementary information, not a degraded copy.** McNemar's test: CNN vs. either PSD model is highly significant (p ≈ 1e-30…1e-37), while LDA vs. XGBoost is not (p ≈ 0.05). The CNN is exclusively right on ~300 segments the PSD models miss, and a 3-model majority vote reaches **0.980** — above any single model. Conclusion: **PSD spectral shape is the primary discriminative signal; time-frequency structure is a secondary, orthogonal cue.**
 
 ### Interference-transfer robustness (LDA)
 
@@ -126,5 +143,6 @@ Cross-condition transfer costs ~12–15 points but never collapses: the drone si
 1. ~~Lossless conversion + verification~~ ✔
 2. ~~Summary DB + EDA + data-quality audit~~ ✔
 3. ~~PSD embedding + linear/GBM baselines + interference-transfer check~~ ✔
-4. **Next — CNN stage** (`CNN/`): log-magnitude STFT spectrograms (50 ms segments), small 2D CNN targeting the MP1/MP2 confusion and cross-condition robustness.
-5. Model comparison (`verify/`): prediction agreement/McNemar, embedding CKA, probing for session/interference leakage, Grad-CAM attribution, gain-perturbation stress test.
+4. ~~Spectrogram CNN + prediction agreement/McNemar/ensemble comparison~~ ✔
+5. **Next — session-leakage verification** (`verify/`): probe CNN embeddings for `run_index` / `interference` predictability + embedding CKA, to answer whether the models learned the drone model or a per-session fingerprint.
+6. Remaining: Grad-CAM attribution on spectrograms, CNN interference-transfer matrix, gain-perturbation stress test, and (optional) higher-frequency-resolution CNN re-run.

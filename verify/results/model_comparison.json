@@ -1,0 +1,38 @@
+{
+  "aligned_segments": 15379,
+  "individual_acc": {
+    "LDA": 0.9722,
+    "XGBoost": 0.9689,
+    "CNN": 0.9458
+  },
+  "pairwise": {
+    "LDA_vs_XGBoost": {
+      "agreement": 0.9562,
+      "XGBoost_only_right": 305,
+      "LDA_only_right": 356,
+      "mcnemar_chi2": 3.78,
+      "p_value": 0.05180211195198781
+    },
+    "LDA_vs_CNN": {
+      "agreement": 0.9335,
+      "CNN_only_right": 300,
+      "LDA_only_right": 706,
+      "mcnemar_chi2": 163.05,
+      "p_value": 2.4435134877091032e-37
+    },
+    "XGBoost_vs_CNN": {
+      "agreement": 0.9354,
+      "CNN_only_right": 305,
+      "XGBoost_only_right": 660,
+      "mcnemar_chi2": 129.86,
+      "p_value": 4.394707593106521e-30
+    }
+  },
+  "n_models_correct": {
+    "0": 51,
+    "1": 272,
+    "2": 1044,
+    "3": 14012
+  },
+  "ensemble_acc": 0.98
+}

@@ -91,6 +91,7 @@ verify/     scripts + results   # robustness & model-comparison checks
 
 - [interference_transfer.py](verify/scripts/interference_transfer.py): 4×4 train-condition × test-condition accuracy matrix — measures how much of the accuracy relies on ambient spectrum context vs. the drone signal itself.
 - [model_comparison.py](verify/scripts/model_comparison.py): aligns LDA / XGBoost / CNN per-segment predictions, reports pairwise agreement, McNemar's test, exclusive-correct counts, and a 3-model majority-vote ensemble — tests whether the models learned complementary cues.
+- [session_leakage.py](verify/scripts/session_leakage.py): linear probes (GroupKFold by recording) on CNN embeddings and PSD features for `drone_id` / `run_index` / `interference` / `flight_mode`, plus CKA between the two representations — tests what each representation actually encodes.
 
 ## Key findings so far
 
@@ -133,9 +134,24 @@ verify/     scripts + results   # robustness & model-comparison checks
 
 Cross-condition transfer costs ~12–15 points but never collapses: the drone signal alone supports ≥75% accuracy in unseen interference environments; the rest of the in-distribution accuracy rides on ambient-spectrum context. WiFi↔Both transfer stays high (both contain WiFi), confirming the failure mode is background occupancy change.
 
+### Session-leakage probing + representation similarity (CKA)
+
+Linear probes (GroupKFold by recording) on each representation, and CKA between them:
+
+| Probe target | CNN embedding | PSD features | chance |
+|---|---|---|---|
+| drone_id (task) | 0.95 | 0.97 | 0.16 |
+| run_index (leakage) | *1.00 — artifact* | **0.05** | 0.20 |
+| interference | **0.08** | 0.80 | 0.26 |
+| flight_mode | 0.50 | 0.80 | 0.36 |
+
+- **No run-level session fingerprint in the signal.** The valid test is the PSD probe (touches no model): `run_index` accuracy is 0.05, *below* chance — the raw spectrum carries no linearly separable "which repeat" fingerprint. (The CNN's 1.00 is an artifact: its embedding is generated per leave-one-run-out fold, so the probe merely recovers which fold's model emitted each vector. It is excluded.)
+- **The CNN representation is interference-invariant; the PSD one is not.** CNN embeddings barely encode interference (0.08, below chance) while PSD strongly does (0.80). This explains why the PSD baseline loses accuracy under interference transfer, and predicts the CNN should transfer more robustly across interference — a hypothesis to test next.
+- **CKA(CNN, PSD) = 0.18** (low): the two representations are genuinely different — a second independent confirmation of the complementarity that McNemar's test showed.
+
 ### Honest caveats
 
-- **Session confound is structurally unresolvable in this dataset**: each model was likely recorded in one session, so model ≡ session. Leave-one-run-out does not remove it. Cross-SDR / cross-day generalisation is unverified.
+- **Session confound is structurally unresolvable in this dataset**: each model was likely recorded in one session, so model ≡ session. Leave-one-run-out and the probes above cannot remove it; the run-level probe only rules out the *within-session repeat* fingerprint. Cross-SDR / cross-day generalisation is unverified.
 - **No drone-absent recordings exist** — the dataset supports model *classification*; building a presence *detector* requires external negative samples.
 
 ## Roadmap
@@ -144,5 +160,6 @@ Cross-condition transfer costs ~12–15 points but never collapses: the drone si
 2. ~~Summary DB + EDA + data-quality audit~~ ✔
 3. ~~PSD embedding + linear/GBM baselines + interference-transfer check~~ ✔
 4. ~~Spectrogram CNN + prediction agreement/McNemar/ensemble comparison~~ ✔
-5. **Next — session-leakage verification** (`verify/`): probe CNN embeddings for `run_index` / `interference` predictability + embedding CKA, to answer whether the models learned the drone model or a per-session fingerprint.
-6. Remaining: Grad-CAM attribution on spectrograms, CNN interference-transfer matrix, gain-perturbation stress test, and (optional) higher-frequency-resolution CNN re-run.
+5. ~~Session-leakage probing + CKA~~ ✔ (no run-level fingerprint; CNN representation is interference-invariant)
+6. **Next — CNN interference-transfer matrix**: run the same 4×4 transfer test on the CNN and compare to the LDA matrix, to confirm the interference-invariance hypothesis from the probing stage.
+7. Remaining: Grad-CAM attribution on spectrograms, gain-perturbation stress test, and (optional) higher-frequency-resolution CNN re-run to close the MP1/MP2 gap.

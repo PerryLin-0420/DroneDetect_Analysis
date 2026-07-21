@@ -91,6 +91,7 @@ verify/     scripts + results   # 魯棒性與模型比較驗證
 
 - [interference_transfer.py](verify/scripts/interference_transfer.py)：4×4「訓練條件 × 測試條件」準確率矩陣——量化準確率中有多少依賴環境頻譜背景、多少來自無人機訊號本身。
 - [model_comparison.py](verify/scripts/model_comparison.py)：對齊 LDA / XGBoost / CNN 的逐 segment 預測，報告 pairwise agreement、McNemar 檢定、獨有答對數、三模型多數決 ensemble——檢驗各模型是否學到互補線索。
+- [session_leakage.py](verify/scripts/session_leakage.py)：對 CNN embedding 與 PSD 特徵做線性 probe（GroupKFold 以錄製為單位），預測 `drone_id` / `run_index` / `interference` / `flight_mode`，並計算兩表示的 CKA——檢驗各表示實際編碼了什麼。
 
 ## 目前主要發現
 
@@ -133,9 +134,24 @@ verify/     scripts + results   # 魯棒性與模型比較驗證
 
 跨條件遷移掉約 12–15 個百分點但不崩盤：無人機訊號本身在未見過的干擾環境下仍支撐 ≥75% 準確率，其餘 in-distribution 準確率依賴環境頻譜背景。WiFi↔Both 互轉維持高分（皆含 WiFi），證實失效模式是背景頻譜佔用改變。
 
+### Session leakage probing + 表示相似度（CKA）
+
+對各表示做線性 probe（GroupKFold 以錄製為單位），並計算兩者的 CKA：
+
+| Probe 目標 | CNN embedding | PSD features | chance |
+|---|---|---|---|
+| drone_id（主任務） | 0.95 | 0.97 | 0.16 |
+| run_index（洩漏） | *1.00 — artifact* | **0.05** | 0.20 |
+| interference | **0.08** | 0.80 | 0.26 |
+| flight_mode | 0.50 | 0.80 | 0.36 |
+
+- **訊號中沒有 run-level session 指紋**。有效檢驗是 PSD probe（不經任何模型）：`run_index` 準確率 0.05，*低於* chance——原始頻譜沒有可線性分離的「第幾次重複」指紋。（CNN 的 1.00 是 artifact：embedding 是逐 leave-one-run-out fold 生成的，probe 只是在辨認每個向量出自哪個 fold 的模型，已排除。）
+- **CNN 表示對干擾不變，PSD 表示則否**。CNN embedding 幾乎不編碼干擾（0.08，低於 chance），PSD 則強烈編碼（0.80）。這解釋了為何 PSD baseline 在干擾遷移時掉分，並預測 **CNN 的干擾遷移應更魯棒**——這是下一步要驗證的假設。
+- **CKA(CNN, PSD) = 0.18**（低）：兩表示確實不同——這是 McNemar 檢定所示互補性的第二個獨立佐證。
+
 ### 誠實聲明（caveats）
 
-- **Session confound 在此 dataset 結構上無解**：每個機型很可能是單一 session 錄製，機型 ≡ session。Leave-one-run-out 無法排除。跨 SDR / 跨日期泛化未經驗證。
+- **Session confound 在此 dataset 結構上無解**：每個機型很可能是單一 session 錄製，機型 ≡ session。Leave-one-run-out 與上述 probe 都無法排除；run-level probe 只能排除「session 內重複」這一層指紋。跨 SDR / 跨日期泛化未經驗證。
 - **沒有「無人機不在場」的錄製**——此 dataset 支援機型*分類*；要做在場*偵測*需要外部負樣本。
 
 ## Roadmap
@@ -144,5 +160,6 @@ verify/     scripts + results   # 魯棒性與模型比較驗證
 2. ~~Summary DB + EDA + 資料品質稽核~~ ✔
 3. ~~PSD embedding + 線性/GBM baseline + 干擾遷移檢驗~~ ✔
 4. ~~Spectrogram CNN + 預測 agreement/McNemar/ensemble 比較~~ ✔
-5. **下一步——session leakage 驗證**（`verify/`）：對 CNN embedding 做 probing（預測 `run_index` / `interference`）+ embedding CKA，回答模型學的是機型還是 per-session 指紋。
-6. 後續：spectrogram 的 Grad-CAM 歸因、CNN 干擾遷移矩陣、增益擾動壓力測試，以及（選配）更高頻率解析度的 CNN 重跑。
+5. ~~Session leakage probing + CKA~~ ✔（無 run-level 指紋；CNN 表示對干擾不變）
+6. **下一步——CNN 干擾遷移矩陣**：對 CNN 跑同樣的 4×4 遷移測試，與 LDA 矩陣對照，驗證 probing 階段得到的「對干擾不變」假設。
+7. 後續：spectrogram 的 Grad-CAM 歸因、增益擾動壓力測試，以及（選配）更高頻率解析度的 CNN 重跑以縮小 MP1/MP2 差距。

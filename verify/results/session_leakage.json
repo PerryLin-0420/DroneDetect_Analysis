@@ -1,0 +1,57 @@
+{
+  "probe": {
+    "CNN embedding": {
+      "drone_id": {
+        "acc": 0.9531,
+        "std": 0.0123,
+        "chance": 0.1561,
+        "artifact": false
+      },
+      "run_index": {
+        "acc": 0.9979,
+        "std": 0.0028,
+        "chance": 0.202,
+        "artifact": true
+      },
+      "interference": {
+        "acc": 0.0807,
+        "std": 0.0066,
+        "chance": 0.2593,
+        "artifact": false
+      },
+      "flight_mode": {
+        "acc": 0.5032,
+        "std": 0.0212,
+        "chance": 0.3581,
+        "artifact": false
+      }
+    },
+    "PSD features": {
+      "drone_id": {
+        "acc": 0.9715,
+        "std": 0.0075,
+        "chance": 0.1561,
+        "artifact": false
+      },
+      "run_index": {
+        "acc": 0.054,
+        "std": 0.0088,
+        "chance": 0.202,
+        "artifact": false
+      },
+      "interference": {
+        "acc": 0.7962,
+        "std": 0.01,
+        "chance": 0.2593,
+        "artifact": false
+      },
+      "flight_mode": {
+        "acc": 0.8022,
+        "std": 0.0165,
+        "chance": 0.3581,
+        "artifact": false
+      }
+    }
+  },
+  "cka_cnn_vs_psd": 0.1821
+}

@@ -1,6 +1,8 @@
 # DroneDetect Analysis Project
 
 > 繁體中文版說明請見 [README.zh-TW.md](README.zh-TW.md)
+>
+> **📋 For the consolidated conclusions (why PSD, verification status, deployment guidance) see [FINDINGS.md](FINDINGS.md).**
 
 Lossless conversion of the DroneDetect RF IQ dataset to parquet, a DuckDB summary layer on top of it, exploratory data analysis (EDA), and a PSD-based drone-model classification baseline with robustness verification. The end goal is drone-model detection/classification research on raw RF signals.
 

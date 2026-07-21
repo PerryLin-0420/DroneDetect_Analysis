@@ -1,6 +1,8 @@
 # DroneDetect 分析專案
 
 > English version: [README.md](README.md)
+>
+> **📋 整合結論（為什麼選 PSD、驗證狀態、部署建議）請見 [FINDINGS.zh-TW.md](FINDINGS.zh-TW.md)。**
 
 將 DroneDetect RF IQ 資料集無損轉換為 parquet，在其上建立 DuckDB summary 層，完成探索式資料分析（EDA），並建立以 PSD 為特徵的無人機機型分類 baseline 與魯棒性驗證。最終目標是基於原始 RF 訊號的無人機機型偵測/分類研究。
 

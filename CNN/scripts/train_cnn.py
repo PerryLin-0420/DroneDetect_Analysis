@@ -24,9 +24,12 @@ np.random.seed(0)
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 RESULTS_DIR = SCRIPT_DIR / ".." / "results"
-SPECS_NPY = RESULTS_DIR / "spectrograms.npy"
-META_PARQUET = RESULTS_DIR / "spectrogram_meta.parquet"
 MODELS_DIR = SCRIPT_DIR / ".." / "models"  # saved per-fold model weights
+# frequency bins: optional CLI arg (256 default); matches extract_spectrograms.py output
+FREQ_BINS = int(sys.argv[1]) if len(sys.argv) > 1 else 256
+SUFFIX = "" if FREQ_BINS == 256 else f"_{FREQ_BINS}"  # keep 256 filenames unchanged
+SPECS_NPY = RESULTS_DIR / f"spectrograms{SUFFIX}.npy"
+META_PARQUET = RESULTS_DIR / f"spectrogram_meta{SUFFIX}.parquet"
 
 DRONE_ORDER = ["AIR", "DIS", "INS", "MIN", "MP1", "MP2", "PHA"]
 BAD_CLIP_THRESHOLD = 0.05
@@ -108,7 +111,7 @@ def train_fold(X, y, meta, fold):
               f"loss {total / n:.4f} ({time.time() - t0:.0f}s)")
 
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    ckpt = MODELS_DIR / f"cnn_fold_run{fold}.pt"
+    ckpt = MODELS_DIR / f"cnn_fold_run{fold}{SUFFIX}.pt"
     torch.save({"state_dict": model.state_dict(), "drone_order": DRONE_ORDER,
                 "held_out_run": int(fold), "epochs": EPOCHS}, ckpt)
     print(f"  fold {fold}: saved {ckpt.name}")
@@ -165,10 +168,10 @@ def main():
     for spine in ax.spines.values():
         spine.set_visible(False)
     fig.tight_layout()
-    fig.savefig(RESULTS_DIR / "cnn_confusion.png", dpi=150, facecolor=SURFACE)
+    fig.savefig(RESULTS_DIR / f"cnn_confusion{SUFFIX}.png", dpi=150, facecolor=SURFACE)
     plt.close(fig)
 
-    (RESULTS_DIR / "cnn_metrics.json").write_text(json.dumps({
+    (RESULTS_DIR / f"cnn_metrics{SUFFIX}.json").write_text(json.dumps({
         "fold_acc": [round(a, 4) for a in fold_acc],
         "segment_acc": round(seg_acc, 4),
         "recording_acc": round(rec_acc, 4)}, indent=2))
@@ -177,8 +180,8 @@ def main():
     out = meta[["relative_path", "drone_id", "interference", "flight_mode",
                 "run_index", "segment_index"]].copy()
     out["pred_cnn"] = [DRONE_ORDER[p] for p in pred_by_row]
-    out.to_parquet(RESULTS_DIR / "cnn_predictions.parquet")
-    np.save(RESULTS_DIR / "cnn_embeddings.npy", emb_by_row)
+    out.to_parquet(RESULTS_DIR / f"cnn_predictions{SUFFIX}.parquet")
+    np.save(RESULTS_DIR / f"cnn_embeddings{SUFFIX}.npy", emb_by_row)
     print(f"Wrote confusion png, metrics json, predictions parquet, embeddings npy "
           f"to {RESULTS_DIR.resolve()}")
 

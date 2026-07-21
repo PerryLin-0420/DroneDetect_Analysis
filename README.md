@@ -1,10 +1,19 @@
 # DroneDetect Analysis Project
 
 > 繁體中文版說明請見 [README.zh-TW.md](README.zh-TW.md)
->
-> **📋 For the consolidated conclusions (why PSD, verification status, deployment guidance) see [FINDINGS.md](FINDINGS.md).**
 
-Lossless conversion of the DroneDetect RF IQ dataset to parquet, a DuckDB summary layer on top of it, exploratory data analysis (EDA), and a PSD-based drone-model classification baseline with robustness verification. The end goal is drone-model detection/classification research on raw RF signals.
+Lossless conversion of the DroneDetect RF IQ dataset to parquet, a DuckDB summary layer on top of it, exploratory data analysis (EDA), and — the main result — a **PSD-based drone-model classifier** validated end to end against a spectrogram CNN. The goal is drone-model detection/classification research on raw RF signals.
+
+## Key result & conclusion
+
+**A normalized 1024-bin Welch PSD fed to a linear classifier (LDA) is the best-balanced drone-model classifier on this dataset** — 0.97 segment / 1.00 recording accuracy across the 7 models, most robust across interference, near-zero training cost, fully interpretable. This held up across every verification stage below; a spectrogram CNN learns *complementary* cues (significant McNemar difference, low CKA, ensemble gain) but never wins on accuracy or robustness.
+
+- **Why PSD wins:** data quality forces it (a ~15 dB gain confound and clipping make absolute-amplitude features unusable, so the normalized PSD is the natural gain-invariant choice), spectral shape is almost linearly separable (XGBoost adds nothing over LDA), and the CNN scores lower while *worsening* the hardest pair and transferring across interference *worse*.
+- **Deployment window:** with continuous clean observation prefer a single long window — **≈25 ms → 0.95**, **≈12.5 ms → 0.92**. Multi-window voting (use *soft* voting) does not beat one long window at equal observation time.
+- **Hardest residual:** the same-family MP1↔MP2 pair (DJI Mavic Pro vs. Pro 2, same OcuSync downlink).
+- **Structural limit:** model ≡ recording-session confound — cross-SDR / cross-day generalisation cannot be verified with this dataset.
+
+Full evidence in [§Findings](#findings); every claim links its figure.
 
 ## Data source
 
@@ -61,8 +70,8 @@ verify_parquet_conversion.py    # bit-exact conversion verification
 Summary_duckdb/summary.parquet  # 390-row per-recording summary table (committed)
 EDA/        scripts + results   # box plots of summary features
 embedding/  scripts + results   # 50 ms PSD features + LDA/XGBoost baselines
-CNN/        scripts + results   # spectrogram extraction + small 2D CNN
-verify/     scripts + results   # robustness & model-comparison checks
+CNN/        scripts + results   # spectrogram extraction + small 2D CNN + Grad-CAM
+verify/     scripts + results   # robustness, leakage & model-comparison checks
 ```
 
 ## Pipeline
@@ -86,49 +95,44 @@ verify/     scripts + results   # robustness & model-comparison checks
 
 ### 5. Spectrogram CNN ([CNN/](CNN))
 
-- [extract_spectrograms.py](CNN/scripts/extract_spectrograms.py): same 50 ms segments → STFT (nperseg 1024, hop 512, two-sided), mean-pooled in the linear power domain to a 256(F)×128(T) grid, then dB, stored as float16 (~1 GB, not committed).
-- [train_cnn.py](CNN/scripts/train_cnn.py): ~200k-param 4-block 2D CNN, per-segment z-score (removes gain — additive in log domain), time-roll + noise augmentation, leave-one-run-out CV. CPU-trained (no CUDA GPU present; GPU only changes speed, not results). Exports predictions + 128-d embeddings for the comparison stage.
+- [extract_spectrograms.py](CNN/scripts/extract_spectrograms.py): same 50 ms segments → STFT (nperseg 1024, hop 512, two-sided), mean-pooled in the linear power domain to a 256(F)×128(T) grid, then dB, stored as float16 (~1 GB, not committed). Frequency bins are a CLI arg (256 default; 512 for the higher-resolution run).
+- [train_cnn.py](CNN/scripts/train_cnn.py): ~200k-param 4-block 2D CNN, per-segment z-score (removes gain — additive in log domain), time-roll + noise augmentation, leave-one-run-out CV. CPU-trained (no CUDA GPU present; GPU only changes speed, not results). Saves per-fold weights to `CNN/models/` and exports predictions + 128-d embeddings for the comparison stage.
+- [gradcam.py](CNN/scripts/gradcam.py): Grad-CAM over the last conv block, overlaid on one clean spectrogram per drone.
 
 ### 6. Verification ([verify/](verify))
 
-- [interference_transfer.py](verify/scripts/interference_transfer.py): 4×4 train-condition × test-condition accuracy matrix — measures how much of the accuracy relies on ambient spectrum context vs. the drone signal itself.
-- [model_comparison.py](verify/scripts/model_comparison.py): aligns LDA / XGBoost / CNN per-segment predictions, reports pairwise agreement, McNemar's test, exclusive-correct counts, and a 3-model majority-vote ensemble — tests whether the models learned complementary cues.
-- [session_leakage.py](verify/scripts/session_leakage.py): linear probes (GroupKFold by recording) on CNN embeddings and PSD features for `drone_id` / `run_index` / `interference` / `flight_mode`, plus CKA between the two representations — tests what each representation actually encodes.
-- [cnn_interference_transfer.py](verify/scripts/cnn_interference_transfer.py): trains one model per interference condition (runs 0–3) and tests on every condition, for both CNN and LDA under one protocol — a fair CNN-vs-PSD cross-interference robustness comparison. Saves the 4 CNN weights to `CNN/models/`.
-- [segment_length_sweep.py](verify/scripts/segment_length_sweep.py): sweeps the observation-window length from 0.39 ms to 50 ms (by slicing the spectrogram time axis — a k-column average *is* the Welch PSD of a k·0.39 ms window) and measures single-window LDA accuracy at each length via leave-one-run-out + Monte-Carlo random windows. Answers "how short can the window be?".
-- [multiwindow_voting.py](verify/scripts/multiwindow_voting.py): splits the budget into V non-overlapping short windows, classifies each, and combines by hard/soft vote — compared against one long window at equal total observation time.
-- [gain_perturbation.py](verify/scripts/gain_perturbation.py): applies ±dB test-time gain and compares normalized vs. un-normalized PSD accuracy — confirms the normalization is gain-invariant.
-- [CNN/scripts/gradcam.py](CNN/scripts/gradcam.py): Grad-CAM over the CNN's last conv block, overlaid on one clean spectrogram per drone — shows whether the model keys on signal bands or receiver artifacts.
+- [interference_transfer.py](verify/scripts/interference_transfer.py): 4×4 train-condition × test-condition accuracy matrix (LDA).
+- [model_comparison.py](verify/scripts/model_comparison.py): aligns LDA / XGBoost / CNN per-segment predictions — pairwise agreement, McNemar's test, exclusive-correct counts, 3-model ensemble.
+- [session_leakage.py](verify/scripts/session_leakage.py): linear probes (GroupKFold by recording) on CNN embeddings and PSD features for `drone_id` / `run_index` / `interference` / `flight_mode`, plus CKA between the two representations.
+- [cnn_interference_transfer.py](verify/scripts/cnn_interference_transfer.py): trains one model per interference condition (runs 0–3) and tests on every condition, for both CNN and LDA under one protocol.
+- [segment_length_sweep.py](verify/scripts/segment_length_sweep.py): single-window LDA accuracy vs. observation-window length (0.39–50 ms) by slicing the spectrogram time axis.
+- [multiwindow_voting.py](verify/scripts/multiwindow_voting.py): V non-overlapping short windows (hard/soft vote) vs. one long window at equal observation time.
+- [gain_perturbation.py](verify/scripts/gain_perturbation.py): ±dB test-time gain, normalized vs. un-normalized PSD accuracy.
 
-## Key findings so far
+## Findings
 
 ### Data quality
 
-1. **Gain confound (~15 dB) splits the dataset into two groups**: AIR/DIS/PHA were recorded hot (avg −17…−26 dBFS, `max_I` ≈ 0.8–1.0) and INS/MIN/MP1/MP2 cold (−35…−39 dBFS). This reflects acquisition gain/distance, not the drones. **Any absolute-amplitude feature is confounded**; per-recording/per-segment normalisation is mandatory.
+1. **Gain confound (~15 dB) splits the dataset into two groups**: AIR/DIS/PHA were recorded hot (avg −17…−26 dBFS, `max_I` ≈ 0.8–1.0) and INS/MIN/MP1/MP2 cold (−35…−39 dBFS). This reflects acquisition gain/distance, not the drones. **Any absolute-amplitude feature is confounded**; per-recording/per-segment normalisation is mandatory — this is what forces the normalized-PSD choice.
+   → [EDA/results/overview_by_drone.png](EDA/results/overview_by_drone.png)
 2. **Clipping**: ~50–60% of AIR/DIS/PHA recordings touch ADC full-scale; the weak-signal group is clean. Two PHA recordings are severely saturated (`BLUE/PHA_ON/PHA_0100_00` 30%, `CLEAN/PHA_ON/PHA_0000_01` 26% of samples) and should be excluded from spectral analysis. `clip_ratio` in the summary table quantifies this per recording.
+   → [EDA/results/box_clip_ratio.png](EDA/results/box_clip_ratio.png)
 3. Scalar statistics (`avg_power`, `rms`, `std`) carry no reliable model-discriminative signal — dominated by the gain confound and, within groups, by flight-mode variance. The scale-invariant pair `iq_correlation`/`iq_imbalance_db` separates models better (RF 5-fold ≈ 0.57 with 2 features) but plausibly encodes per-session receiver state, so it is kept out of the main models.
 4. dB values must never be SUM- or AVG-aggregated across recordings in BI tools; aggregate the linear `avg_power` first, then convert (`10·LOG10(AVERAGE(avg_power))`).
 
-### Baseline separability (PSD shape, leave-one-run-out)
+### Classifier comparison (leave-one-run-out)
 
-| Model | Segment acc | Recording acc (majority vote) |
-|---|---|---|
-| LDA | **0.972 ± 0.004** | **1.000** |
-| XGBoost | 0.969 ± 0.006 | 0.987 |
+| Model | Feature | Segment acc | Recording acc |
+|---|---|---|---|
+| **LDA** | normalized PSD | **0.972 ± 0.004** | **1.000** |
+| XGBoost | normalized PSD | 0.969 ± 0.006 | 0.987 |
+| CNN | spectrogram | 0.946 | 0.977 |
 
-- Spectral shape is almost linearly separable across the 7 models; the only meaningful confusion is **MP1 ↔ MP2** (7–8%, same-family OcuSync downlinks).
-- Non-linearity adds nothing on PSD features — the remaining headroom is in time-frequency structure.
+→ [embedding/results/baseline_confusion.png](embedding/results/baseline_confusion.png) · [CNN/results/cnn_confusion.png](CNN/results/cnn_confusion.png)
 
-### Spectrogram CNN vs. PSD baseline
-
-| Model | Segment acc | Recording acc |
-|---|---|---|
-| LDA (PSD, linear) | **0.972** | **1.000** |
-| XGBoost (PSD) | 0.969 | 0.987 |
-| CNN (spectrogram) | 0.946 | 0.977 |
-
-- The CNN **does not beat the linear PSD baseline**, and MP2→MP1 confusion actually worsens to 16%. The most likely cause is frequency resolution: the pooled spectrogram has 256 bins (~234 kHz/bin) vs. the PSD's 1024 bins (~58.6 kHz/bin), so the fine spectral detail that separates same-family models was pooled away.
-- **But the CNN learns complementary information, not a degraded copy.** McNemar's test: CNN vs. either PSD model is highly significant (p ≈ 1e-30…1e-37), while LDA vs. XGBoost is not (p ≈ 0.05). The CNN is exclusively right on ~300 segments the PSD models miss, and a 3-model majority vote reaches **0.980** — above any single model. Conclusion: **PSD spectral shape is the primary discriminative signal; time-frequency structure is a secondary, orthogonal cue.**
+- **Spectral shape is almost linearly separable** across the 7 models; XGBoost adds nothing over LDA, so the structure is linear and needs no heavy model. The only meaningful confusion is **MP1 ↔ MP2** (7–8%, same-family OcuSync downlinks).
+- **The CNN does not beat it** (0.946) and *worsens* MP2→MP1 confusion to 16% — likely because its pooled spectrogram has 256 frequency bins (~234 kHz/bin) vs. the PSD's 1024 (~58.6 kHz/bin), pooling away the fine detail that separates same-family models.
+- **But the CNN learns complementary cues, not a degraded copy.** McNemar: CNN vs. either PSD model is highly significant (p ≈ 1e-30…1e-37) while LDA vs. XGBoost is not (p ≈ 0.05); the CNN is exclusively right on ~300 segments the PSD models miss, and a 3-model majority vote reaches **0.980**. So PSD spectral shape is the primary signal; time-frequency structure is a secondary, orthogonal cue.
 
 ### Interference-transfer robustness (LDA)
 
@@ -139,11 +143,14 @@ verify/     scripts + results   # robustness & model-comparison checks
 | wifi | 0.80 | 0.75 | *0.98* | 0.91 |
 | both | 0.78 | 0.82 | 0.93 | *0.97* |
 
-Cross-condition transfer costs ~12–15 points but never collapses: the drone signal alone supports ≥75% accuracy in unseen interference environments; the rest of the in-distribution accuracy rides on ambient-spectrum context. WiFi↔Both transfer stays high (both contain WiFi), confirming the failure mode is background occupancy change.
+→ [verify/results/interference_transfer.png](verify/results/interference_transfer.png)
+
+Cross-condition transfer costs ~12–15 points but never collapses: the drone signal alone supports ≥0.75 in unseen interference; the rest of the in-distribution accuracy rides on ambient-spectrum context. WiFi↔Both stays high (both contain WiFi), confirming the failure mode is background-occupancy change.
 
 ### Session-leakage probing + representation similarity (CKA)
 
-Linear probes (GroupKFold by recording) on each representation, and CKA between them:
+Linear probes (GroupKFold by recording) on each representation; CKA between them.
+→ [verify/results/session_leakage_probe.png](verify/results/session_leakage_probe.png)
 
 | Probe target | CNN embedding | PSD features | chance |
 |---|---|---|---|
@@ -152,58 +159,65 @@ Linear probes (GroupKFold by recording) on each representation, and CKA between 
 | interference | **0.08** | 0.80 | 0.26 |
 | flight_mode | 0.50 | 0.80 | 0.36 |
 
-- **No run-level session fingerprint in the signal.** The valid test is the PSD probe (touches no model): `run_index` accuracy is 0.05, *below* chance — the raw spectrum carries no linearly separable "which repeat" fingerprint. (The CNN's 1.00 is an artifact: its embedding is generated per leave-one-run-out fold, so the probe merely recovers which fold's model emitted each vector. It is excluded.)
-- **The CNN embedding used here barely encodes interference (0.08, below chance) while PSD strongly does (0.80).** Note this embedding comes from the leave-one-run-out models, which *saw all four interference conditions* during training — its invariance is a product of mixed-interference training. This led to a hypothesis (CNN transfers more robustly) that the transfer experiment below then **refuted** — see the caveat there.
-- **CKA(CNN, PSD) = 0.18** (low): the two representations are genuinely different — a second independent confirmation of the complementarity that McNemar's test showed.
+- **No run-level session fingerprint in the signal.** The valid test is the PSD probe (touches no model): `run_index` is 0.05, *below* chance. (The CNN's 1.00 is an artifact — its embedding is generated per leave-one-run-out fold, so the probe just recovers which fold's model emitted each vector; excluded.)
+- **CKA(CNN, PSD) = 0.18** (low): the two representations are genuinely different — a second independent confirmation of the complementarity McNemar showed.
+- The CNN embedding barely encodes interference (0.08) while PSD strongly does (0.80). That invariance is a product of the CNN's *mixed-interference* training, and led to a hypothesis the transfer test below then **refuted**.
 
 ### Interference transfer: CNN vs. PSD (unified protocol) — hypothesis refuted
 
-Train one model per condition (runs 0–3); diagonal tests the held-out run 4 of the same condition, off-diagonal tests the other conditions:
+Train one model per condition (runs 0–3); diagonal = held-out run 4 of the same condition, off-diagonal = other conditions.
+→ [verify/results/cnn_vs_lda_interference_transfer.png](verify/results/cnn_vs_lda_interference_transfer.png)
 
 | | on-diagonal (held-out) | off-diagonal (cross-interference) | drop |
 |---|---|---|---|
 | LDA (PSD) | 0.96 | 0.83 | **0.13** |
 | CNN (spectrogram) | 0.91 | 0.72 | **0.19** |
 
-- **The CNN transfers *worse*, not better** — larger drop and lower accuracy in every off-diagonal cell. The probing-stage prediction is refuted.
-- **Why the prediction failed:** the probe's interference-invariance came from an embedding trained on *all* interference conditions. The transfer models are trained on a *single* condition each, a different setup. With only ~3k segments per condition, the high-capacity CNN overfits the training condition's spectral background, while the low-capacity linear LDA generalises across conditions better. This is the classic "small data + out-of-distribution → simpler model wins" pattern, and it reinforces the project's through-line: **on this dataset, PSD + a linear model is the strongest and most robust combination.**
+- **The CNN transfers *worse*, not better** — larger drop and lower accuracy in every off-diagonal cell.
+- **Why the earlier prediction failed:** the probe's invariance came from an embedding trained on *all* interference conditions; these transfer models see *one* condition each. With ~3k segments/condition the high-capacity CNN overfits the training condition's background while the linear LDA generalises better — the classic "small data + out-of-distribution → simpler model wins", reinforcing PSD + linear as the robust choice.
 
 ### Minimum observation-window length
 
-Single-window LDA accuracy (leave-one-run-out, all interference pooled, 256-bin PSD) vs. window length:
+Single-window LDA accuracy (leave-one-run-out, all interference pooled, 256-bin PSD) vs. window length.
+→ [verify/results/segment_length_sweep.png](verify/results/segment_length_sweep.png)
 
 | Window | 0.39 ms | 0.78 ms | 1.6 ms | 3.1 ms | 6.3 ms | 12.5 ms | 25 ms | 50 ms |
 |---|---|---|---|---|---|---|---|---|
 | Accuracy | 0.66 | 0.71 | 0.78 | 0.83 | 0.89 | 0.92 | 0.95 | 0.96 |
 
 - **Even 0.39 ms carries a lot** — a single spectrogram column already reaches 0.66 (chance 0.14).
-- **Diminishing returns set in around 12–25 ms**: 12.5 ms → 0.92, 25 ms → 0.95, and doubling to 50 ms buys only ~1.5 more points. Practical sweet spots: **~12.5 ms for a low-latency ≈0.92**, **~25 ms for ≈0.95**.
-- Accuracy here is a slight underestimate (256-bin PSD; the native 1024-bin PSD reaches 0.97 at 50 ms).
+- **Diminishing returns around 12–25 ms**: doubling 25→50 ms buys only ~1.5 points. Sweet spots: **~12.5 ms for a low-latency ≈0.92**, **~25 ms for ≈0.95**. (256-bin PSD; native 1024-bin is ~1 pt higher.)
 
 ### One long window vs. several short windows that vote
 
-Spending a fixed observation budget on V non-overlapping short windows (classify each, then vote) instead of one long window:
+Spending a fixed observation budget on V non-overlapping short windows (classify each, then vote) instead of one long window.
+→ [verify/results/multiwindow_voting.png](verify/results/multiwindow_voting.png)
 
-- **Soft voting (averaging class probabilities) beats hard voting (majority class)** by ~0.5–1 point at every budget — if you vote, average probabilities.
-- **But at equal total observation time, one long window is still ≥ multi-window voting.** A single 25 ms window (0.95) matches what 12.5 ms × 3 votes (37.5 ms, 0.948) or 6.25 ms × 7 votes (43.8 ms, 0.945) need *more* time to reach. The shorter the base window, the lower the voting curve saturates (3.1 ms × N plateaus near 0.92).
-- **Why:** for PSD, a long window's Welch averaging is feature-level aggregation that directly lowers the spectral-estimate variance while keeping all the information; voting is decision-level aggregation after each short window has already lost spectral stability, so it cannot fully recover. Feature-level ≥ decision-level here.
-- **Practical takeaway:** with continuous clean observation, prefer a single long window (≈25 ms for ~0.95, ≈12.5 ms for ~0.92). Multi-window voting earns its keep only when observation is intermittent (hopping/bursty signal) or robustness to a single corrupted window matters — then use soft voting.
+- **Soft voting (averaging class probabilities) beats hard voting** by ~0.5–1 point everywhere — if you vote, average probabilities.
+- **But at equal observation time, one long window is still ≥ voting.** A single 25 ms window (0.95) matches what 12.5 ms × 3 (37.5 ms, 0.948) or 6.25 ms × 7 (43.8 ms, 0.945) need *more* time to reach; shorter base windows saturate lower (3.1 ms × N plateaus ~0.92).
+- **Why:** for PSD, a long window's Welch averaging is feature-level aggregation (lowers spectral-estimate variance, keeps all information) and beats decision-level voting. Use voting only for intermittent signals or single-window-corruption robustness.
+
+### Gain-invariance & attribution (additive checks)
+
+- **Gain-perturbation stress test:** applying ±20 dB of test-time gain leaves the normalized PSD flat at 0.96 across the whole range while un-normalized raw log-power collapses (0.51 at −20 dB, 0.60 at +20 dB) — the normalization is genuinely gain-invariant.
+  → [verify/results/gain_perturbation.png](verify/results/gain_perturbation.png)
+- **Grad-CAM:** on the clean-trained CNN, class activation lands on each drone's occupied frequency bands, **not** the DC/LO-leakage line at 0 MHz — the model keys on signal, not a receiver artifact; each model shows a distinct spectral footprint.
+  → [CNN/results/gradcam.png](CNN/results/gradcam.png)
 
 ### Honest caveats
 
-- **Session confound is structurally unresolvable in this dataset**: each model was likely recorded in one session, so model ≡ session. Leave-one-run-out and the probes above cannot remove it; the run-level probe only rules out the *within-session repeat* fingerprint. Cross-SDR / cross-day generalisation is unverified.
-- **No drone-absent recordings exist** — the dataset supports model *classification*; building a presence *detector* requires external negative samples.
+- **Model ≡ session confound is structurally unresolvable here.** Each model was likely recorded in one session; leave-one-run-out and the probes only rule out the *within-session repeat* fingerprint, not the session identity. Cross-SDR / cross-day generalisation is unverified.
+- **No drone-absent recordings** — supports model *classification*, not presence *detection* (that needs external negative samples).
+- **256-bin underestimate:** the window-length and voting studies reuse the 256-bin spectrogram; native 1024-bin PSD is ~1 pt higher. Trends are unaffected.
 
 ## Roadmap
 
 1. ~~Lossless conversion + verification~~ ✔
 2. ~~Summary DB + EDA + data-quality audit~~ ✔
 3. ~~PSD embedding + linear/GBM baselines + interference-transfer check~~ ✔
-4. ~~Spectrogram CNN + prediction agreement/McNemar/ensemble comparison~~ ✔
-5. ~~Session-leakage probing + CKA~~ ✔ (no run-level fingerprint)
-6. ~~CNN interference-transfer matrix vs. LDA~~ ✔ (hypothesis refuted: single-condition CNN transfers worse than linear PSD baseline)
-7. ~~Minimum-window-length sweep + multi-window voting~~ ✔ (≈12.5 ms → 0.92, ≈25 ms → 0.95; one long window ≥ voting at equal time)
-8. ~~Grad-CAM attribution + gain-perturbation stress test~~ ✔ (CNN keys on signal bands not DC artifact; normalized PSD is gain-invariant across ±20 dB)
-9. In progress: higher-frequency-resolution (512-bin) CNN re-run to try to close the MP1/MP2 gap.
-
-**Overall conclusion so far:** across every stage — baselines, model comparison, probing, and interference transfer — PSD spectral shape with a linear/low-capacity model is the strongest, most robust drone-model classifier on this dataset. The CNN learns complementary cues (significant McNemar, low CKA, ensemble gain) but does not win on accuracy or cross-interference robustness. The hardest residual is the same-family MP1↔MP2 pair. The deployment-level generalisation question (model ≡ session) remains structurally unanswerable here.
+4. ~~Spectrogram CNN + McNemar/ensemble comparison~~ ✔
+5. ~~Session-leakage probing + CKA~~ ✔
+6. ~~CNN interference-transfer vs. LDA~~ ✔ (hypothesis refuted)
+7. ~~Minimum-window-length sweep + multi-window voting~~ ✔
+8. ~~Grad-CAM attribution + gain-perturbation stress test~~ ✔
+9. In progress: higher-frequency-resolution (512-bin) CNN re-run to try to close the MP1↔MP2 gap.

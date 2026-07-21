@@ -92,6 +92,7 @@ verify/     scripts + results   # 魯棒性與模型比較驗證
 - [interference_transfer.py](verify/scripts/interference_transfer.py)：4×4「訓練條件 × 測試條件」準確率矩陣——量化準確率中有多少依賴環境頻譜背景、多少來自無人機訊號本身。
 - [model_comparison.py](verify/scripts/model_comparison.py)：對齊 LDA / XGBoost / CNN 的逐 segment 預測，報告 pairwise agreement、McNemar 檢定、獨有答對數、三模型多數決 ensemble——檢驗各模型是否學到互補線索。
 - [session_leakage.py](verify/scripts/session_leakage.py)：對 CNN embedding 與 PSD 特徵做線性 probe（GroupKFold 以錄製為單位），預測 `drone_id` / `run_index` / `interference` / `flight_mode`，並計算兩表示的 CKA——檢驗各表示實際編碼了什麼。
+- [cnn_interference_transfer.py](verify/scripts/cnn_interference_transfer.py)：對每個干擾條件（runs 0–3）各訓練一個模型並測試所有條件，CNN 與 LDA 用同一協議——公平比較 CNN vs PSD 的跨干擾魯棒性。4 個 CNN 權重存到 `CNN/models/`。
 
 ## 目前主要發現
 
@@ -146,8 +147,20 @@ verify/     scripts + results   # 魯棒性與模型比較驗證
 | flight_mode | 0.50 | 0.80 | 0.36 |
 
 - **訊號中沒有 run-level session 指紋**。有效檢驗是 PSD probe（不經任何模型）：`run_index` 準確率 0.05，*低於* chance——原始頻譜沒有可線性分離的「第幾次重複」指紋。（CNN 的 1.00 是 artifact：embedding 是逐 leave-one-run-out fold 生成的，probe 只是在辨認每個向量出自哪個 fold 的模型，已排除。）
-- **CNN 表示對干擾不變，PSD 表示則否**。CNN embedding 幾乎不編碼干擾（0.08，低於 chance），PSD 則強烈編碼（0.80）。這解釋了為何 PSD baseline 在干擾遷移時掉分，並預測 **CNN 的干擾遷移應更魯棒**——這是下一步要驗證的假設。
+- **這裡用的 CNN embedding 幾乎不編碼干擾（0.08，低於 chance），PSD 則強烈編碼（0.80）**。注意此 embedding 來自 leave-one-run-out 模型，其訓練時*看過全部 4 種干擾條件*——這種不變性是「混合干擾訓練」的產物。這導出了一個假設（CNN 遷移應更魯棒），但下方的遷移實驗**推翻了它**——見該處說明。
 - **CKA(CNN, PSD) = 0.18**（低）：兩表示確實不同——這是 McNemar 檢定所示互補性的第二個獨立佐證。
+
+### 干擾遷移：CNN vs. PSD（統一協議）——假設被推翻
+
+對每個條件（runs 0–3）各訓練一個模型；對角線測同條件的 held-out run 4，非對角線測其他條件：
+
+| | 對角線（held-out） | 非對角線（跨干擾） | 掉分 |
+|---|---|---|---|
+| LDA (PSD) | 0.96 | 0.83 | **0.13** |
+| CNN (spectrogram) | 0.91 | 0.72 | **0.19** |
+
+- **CNN 遷移*更差*而非更好**——掉分更大，且每個非對角 cell 都比 LDA 低。probing 階段的預測被推翻。
+- **為何預測失敗**：probe 的干擾不變性來自「見過全部干擾」的 embedding；而遷移模型是各自只在*單一*條件訓練的，設定不同。每個條件僅約 3k segment，高容量 CNN 過擬合訓練條件的頻譜背景，低容量的線性 LDA 反而跨條件泛化更好。這是經典的「小資料 + 分布外 → 簡單模型勝出」現象，也再次印證專案主線：**在此資料集上，PSD + 線性模型是最強且最魯棒的組合。**
 
 ### 誠實聲明（caveats）
 
@@ -160,6 +173,8 @@ verify/     scripts + results   # 魯棒性與模型比較驗證
 2. ~~Summary DB + EDA + 資料品質稽核~~ ✔
 3. ~~PSD embedding + 線性/GBM baseline + 干擾遷移檢驗~~ ✔
 4. ~~Spectrogram CNN + 預測 agreement/McNemar/ensemble 比較~~ ✔
-5. ~~Session leakage probing + CKA~~ ✔（無 run-level 指紋；CNN 表示對干擾不變）
-6. **下一步——CNN 干擾遷移矩陣**：對 CNN 跑同樣的 4×4 遷移測試，與 LDA 矩陣對照，驗證 probing 階段得到的「對干擾不變」假設。
+5. ~~Session leakage probing + CKA~~ ✔（無 run-level 指紋）
+6. ~~CNN 干擾遷移矩陣 vs. LDA~~ ✔（假設被推翻：單條件 CNN 遷移比線性 PSD baseline 更差）
 7. 後續：spectrogram 的 Grad-CAM 歸因、增益擾動壓力測試，以及（選配）更高頻率解析度的 CNN 重跑以縮小 MP1/MP2 差距。
+
+**目前整體結論：** 綜觀所有階段（baseline、模型比較、probing、干擾遷移），在此資料集上，PSD 頻譜形狀搭配線性/低容量模型是最強、最魯棒的無人機機型分類器。CNN 學到互補線索（McNemar 顯著、CKA 低、ensemble 有增益），但在準確率與跨干擾魯棒性上都未勝出。最難的殘留問題是同家族的 MP1↔MP2。部署層級的泛化問題（機型 ≡ session）在此結構上仍無法回答。

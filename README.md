@@ -92,6 +92,7 @@ verify/     scripts + results   # robustness & model-comparison checks
 - [interference_transfer.py](verify/scripts/interference_transfer.py): 4×4 train-condition × test-condition accuracy matrix — measures how much of the accuracy relies on ambient spectrum context vs. the drone signal itself.
 - [model_comparison.py](verify/scripts/model_comparison.py): aligns LDA / XGBoost / CNN per-segment predictions, reports pairwise agreement, McNemar's test, exclusive-correct counts, and a 3-model majority-vote ensemble — tests whether the models learned complementary cues.
 - [session_leakage.py](verify/scripts/session_leakage.py): linear probes (GroupKFold by recording) on CNN embeddings and PSD features for `drone_id` / `run_index` / `interference` / `flight_mode`, plus CKA between the two representations — tests what each representation actually encodes.
+- [cnn_interference_transfer.py](verify/scripts/cnn_interference_transfer.py): trains one model per interference condition (runs 0–3) and tests on every condition, for both CNN and LDA under one protocol — a fair CNN-vs-PSD cross-interference robustness comparison. Saves the 4 CNN weights to `CNN/models/`.
 
 ## Key findings so far
 
@@ -146,8 +147,20 @@ Linear probes (GroupKFold by recording) on each representation, and CKA between 
 | flight_mode | 0.50 | 0.80 | 0.36 |
 
 - **No run-level session fingerprint in the signal.** The valid test is the PSD probe (touches no model): `run_index` accuracy is 0.05, *below* chance — the raw spectrum carries no linearly separable "which repeat" fingerprint. (The CNN's 1.00 is an artifact: its embedding is generated per leave-one-run-out fold, so the probe merely recovers which fold's model emitted each vector. It is excluded.)
-- **The CNN representation is interference-invariant; the PSD one is not.** CNN embeddings barely encode interference (0.08, below chance) while PSD strongly does (0.80). This explains why the PSD baseline loses accuracy under interference transfer, and predicts the CNN should transfer more robustly across interference — a hypothesis to test next.
+- **The CNN embedding used here barely encodes interference (0.08, below chance) while PSD strongly does (0.80).** Note this embedding comes from the leave-one-run-out models, which *saw all four interference conditions* during training — its invariance is a product of mixed-interference training. This led to a hypothesis (CNN transfers more robustly) that the transfer experiment below then **refuted** — see the caveat there.
 - **CKA(CNN, PSD) = 0.18** (low): the two representations are genuinely different — a second independent confirmation of the complementarity that McNemar's test showed.
+
+### Interference transfer: CNN vs. PSD (unified protocol) — hypothesis refuted
+
+Train one model per condition (runs 0–3); diagonal tests the held-out run 4 of the same condition, off-diagonal tests the other conditions:
+
+| | on-diagonal (held-out) | off-diagonal (cross-interference) | drop |
+|---|---|---|---|
+| LDA (PSD) | 0.96 | 0.83 | **0.13** |
+| CNN (spectrogram) | 0.91 | 0.72 | **0.19** |
+
+- **The CNN transfers *worse*, not better** — larger drop and lower accuracy in every off-diagonal cell. The probing-stage prediction is refuted.
+- **Why the prediction failed:** the probe's interference-invariance came from an embedding trained on *all* interference conditions. The transfer models are trained on a *single* condition each, a different setup. With only ~3k segments per condition, the high-capacity CNN overfits the training condition's spectral background, while the low-capacity linear LDA generalises across conditions better. This is the classic "small data + out-of-distribution → simpler model wins" pattern, and it reinforces the project's through-line: **on this dataset, PSD + a linear model is the strongest and most robust combination.**
 
 ### Honest caveats
 
@@ -160,6 +173,8 @@ Linear probes (GroupKFold by recording) on each representation, and CKA between 
 2. ~~Summary DB + EDA + data-quality audit~~ ✔
 3. ~~PSD embedding + linear/GBM baselines + interference-transfer check~~ ✔
 4. ~~Spectrogram CNN + prediction agreement/McNemar/ensemble comparison~~ ✔
-5. ~~Session-leakage probing + CKA~~ ✔ (no run-level fingerprint; CNN representation is interference-invariant)
-6. **Next — CNN interference-transfer matrix**: run the same 4×4 transfer test on the CNN and compare to the LDA matrix, to confirm the interference-invariance hypothesis from the probing stage.
+5. ~~Session-leakage probing + CKA~~ ✔ (no run-level fingerprint)
+6. ~~CNN interference-transfer matrix vs. LDA~~ ✔ (hypothesis refuted: single-condition CNN transfers worse than linear PSD baseline)
 7. Remaining: Grad-CAM attribution on spectrograms, gain-perturbation stress test, and (optional) higher-frequency-resolution CNN re-run to close the MP1/MP2 gap.
+
+**Overall conclusion so far:** across every stage — baselines, model comparison, probing, and interference transfer — PSD spectral shape with a linear/low-capacity model is the strongest, most robust drone-model classifier on this dataset. The CNN learns complementary cues (significant McNemar, low CKA, ensemble gain) but does not win on accuracy or cross-interference robustness. The hardest residual is the same-family MP1↔MP2 pair. The deployment-level generalisation question (model ≡ session) remains structurally unanswerable here.

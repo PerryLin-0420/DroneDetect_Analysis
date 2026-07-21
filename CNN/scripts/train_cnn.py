@@ -26,6 +26,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 RESULTS_DIR = SCRIPT_DIR / ".." / "results"
 SPECS_NPY = RESULTS_DIR / "spectrograms.npy"
 META_PARQUET = RESULTS_DIR / "spectrogram_meta.parquet"
+MODELS_DIR = SCRIPT_DIR / ".." / "models"  # saved per-fold model weights
 
 DRONE_ORDER = ["AIR", "DIS", "INS", "MIN", "MP1", "MP2", "PHA"]
 BAD_CLIP_THRESHOLD = 0.05
@@ -105,6 +106,12 @@ def train_fold(X, y, meta, fold):
             total += loss.item() * len(idx)
         print(f"  fold {fold} epoch {epoch + 1}/{EPOCHS}: "
               f"loss {total / n:.4f} ({time.time() - t0:.0f}s)")
+
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    ckpt = MODELS_DIR / f"cnn_fold_run{fold}.pt"
+    torch.save({"state_dict": model.state_dict(), "drone_order": DRONE_ORDER,
+                "held_out_run": int(fold), "epochs": EPOCHS}, ckpt)
+    print(f"  fold {fold}: saved {ckpt.name}")
 
     model.eval()
     preds, embs = [], []

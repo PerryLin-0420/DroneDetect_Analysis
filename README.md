@@ -114,9 +114,9 @@ verify/     scripts + results   # robustness, leakage & model-comparison checks
 ### Data quality
 
 1. **Gain confound (~15 dB) splits the dataset into two groups**: AIR/DIS/PHA were recorded hot (avg −17…−26 dBFS, `max_I` ≈ 0.8–1.0) and INS/MIN/MP1/MP2 cold (−35…−39 dBFS). This reflects acquisition gain/distance, not the drones. **Any absolute-amplitude feature is confounded**; per-recording/per-segment normalisation is mandatory — this is what forces the normalized-PSD choice.
-   → [EDA/results/overview_by_drone.png](EDA/results/overview_by_drone.png)
+   → ![EDA/results/overview_by_drone.png](EDA/results/overview_by_drone.png)
 2. **Clipping**: ~50–60% of AIR/DIS/PHA recordings touch ADC full-scale; the weak-signal group is clean. Two PHA recordings are severely saturated (`BLUE/PHA_ON/PHA_0100_00` 30%, `CLEAN/PHA_ON/PHA_0000_01` 26% of samples) and should be excluded from spectral analysis. `clip_ratio` in the summary table quantifies this per recording.
-   → [EDA/results/box_clip_ratio.png](EDA/results/box_clip_ratio.png)
+   → ![EDA/results/box_clip_ratio.png](EDA/results/box_clip_ratio.png)
 3. Scalar statistics (`avg_power`, `rms`, `std`) carry no reliable model-discriminative signal — dominated by the gain confound and, within groups, by flight-mode variance. The scale-invariant pair `iq_correlation`/`iq_imbalance_db` separates models better (RF 5-fold ≈ 0.57 with 2 features) but plausibly encodes per-session receiver state, so it is kept out of the main models.
 4. dB values must never be SUM- or AVG-aggregated across recordings in BI tools; aggregate the linear `avg_power` first, then convert (`10·LOG10(AVERAGE(avg_power))`).
 
@@ -128,7 +128,7 @@ verify/     scripts + results   # robustness, leakage & model-comparison checks
 | XGBoost | normalized PSD | 0.969 ± 0.006 | 0.987 |
 | CNN | spectrogram | 0.946 | 0.977 |
 
-→ [embedding/results/baseline_confusion.png](embedding/results/baseline_confusion.png) · [CNN/results/cnn_confusion.png](CNN/results/cnn_confusion.png)
+→ ![embedding/results/baseline_confusion.png](embedding/results/baseline_confusion.png) · ![CNN/results/cnn_confusion.png](CNN/results/cnn_confusion.png)
 
 - **Spectral shape is almost linearly separable** across the 7 models; XGBoost adds nothing over LDA, so the structure is linear and needs no heavy model. The only meaningful confusion is **MP1 ↔ MP2** (7–8%, same-family OcuSync downlinks).
 - **The CNN does not beat it** (0.946) and *worsens* MP2→MP1 confusion to 16% — likely because its pooled spectrogram has 256 frequency bins (~234 kHz/bin) vs. the PSD's 1024 (~58.6 kHz/bin), pooling away the fine detail that separates same-family models.
@@ -143,14 +143,14 @@ verify/     scripts + results   # robustness, leakage & model-comparison checks
 | wifi | 0.80 | 0.75 | *0.98* | 0.91 |
 | both | 0.78 | 0.82 | 0.93 | *0.97* |
 
-→ [verify/results/interference_transfer.png](verify/results/interference_transfer.png)
+→ ![verify/results/interference_transfer.png](verify/results/interference_transfer.png)
 
 Cross-condition transfer costs ~12–15 points but never collapses: the drone signal alone supports ≥0.75 in unseen interference; the rest of the in-distribution accuracy rides on ambient-spectrum context. WiFi↔Both stays high (both contain WiFi), confirming the failure mode is background-occupancy change.
 
 ### Session-leakage probing + representation similarity (CKA)
 
 Linear probes (GroupKFold by recording) on each representation; CKA between them.
-→ [verify/results/session_leakage_probe.png](verify/results/session_leakage_probe.png)
+→ ![verify/results/session_leakage_probe.png](verify/results/session_leakage_probe.png)
 
 | Probe target | CNN embedding | PSD features | chance |
 |---|---|---|---|
@@ -166,7 +166,7 @@ Linear probes (GroupKFold by recording) on each representation; CKA between them
 ### Interference transfer: CNN vs. PSD (unified protocol) — hypothesis refuted
 
 Train one model per condition (runs 0–3); diagonal = held-out run 4 of the same condition, off-diagonal = other conditions.
-→ [verify/results/cnn_vs_lda_interference_transfer.png](verify/results/cnn_vs_lda_interference_transfer.png)
+→ ![verify/results/cnn_vs_lda_interference_transfer.png](verify/results/cnn_vs_lda_interference_transfer.png)
 
 | | on-diagonal (held-out) | off-diagonal (cross-interference) | drop |
 |---|---|---|---|
@@ -179,7 +179,7 @@ Train one model per condition (runs 0–3); diagonal = held-out run 4 of the sam
 ### Minimum observation-window length
 
 Single-window LDA accuracy (leave-one-run-out, all interference pooled, 256-bin PSD) vs. window length.
-→ [verify/results/segment_length_sweep.png](verify/results/segment_length_sweep.png)
+→ ![verify/results/segment_length_sweep.png](verify/results/segment_length_sweep.png)
 
 | Window | 0.39 ms | 0.78 ms | 1.6 ms | 3.1 ms | 6.3 ms | 12.5 ms | 25 ms | 50 ms |
 |---|---|---|---|---|---|---|---|---|
@@ -191,7 +191,7 @@ Single-window LDA accuracy (leave-one-run-out, all interference pooled, 256-bin 
 ### One long window vs. several short windows that vote
 
 Spending a fixed observation budget on V non-overlapping short windows (classify each, then vote) instead of one long window.
-→ [verify/results/multiwindow_voting.png](verify/results/multiwindow_voting.png)
+→ ![verify/results/multiwindow_voting.png](verify/results/multiwindow_voting.png)
 
 - **Soft voting (averaging class probabilities) beats hard voting** by ~0.5–1 point everywhere — if you vote, average probabilities.
 - **But at equal observation time, one long window is still ≥ voting.** A single 25 ms window (0.95) matches what 12.5 ms × 3 (37.5 ms, 0.948) or 6.25 ms × 7 (43.8 ms, 0.945) need *more* time to reach; shorter base windows saturate lower (3.1 ms × N plateaus ~0.92).
@@ -200,9 +200,9 @@ Spending a fixed observation budget on V non-overlapping short windows (classify
 ### Gain-invariance & attribution (additive checks)
 
 - **Gain-perturbation stress test:** applying ±20 dB of test-time gain leaves the normalized PSD flat at 0.96 across the whole range while un-normalized raw log-power collapses (0.51 at −20 dB, 0.60 at +20 dB) — the normalization is genuinely gain-invariant.
-  → [verify/results/gain_perturbation.png](verify/results/gain_perturbation.png)
+  → ![verify/results/gain_perturbation.png](verify/results/gain_perturbation.png)
 - **Grad-CAM:** on the clean-trained CNN, class activation lands on each drone's occupied frequency bands, **not** the DC/LO-leakage line at 0 MHz — the model keys on signal, not a receiver artifact; each model shows a distinct spectral footprint.
-  → [CNN/results/gradcam.png](CNN/results/gradcam.png)
+  → ![CNN/results/gradcam.png](CNN/results/gradcam.png)
 
 ### Honest caveats
 

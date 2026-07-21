@@ -114,9 +114,9 @@ verify/     scripts + results   # 魯棒性、leakage 與模型比較驗證
 ### 資料品質
 
 1. **增益 confound（約 15 dB）把資料分成兩群**：AIR/DIS/PHA 錄製增益偏高（平均 −17…−26 dBFS，`max_I` ≈ 0.8–1.0），INS/MIN/MP1/MP2 偏低（−35…−39 dBFS）。這是採集端增益/距離差異，不是機型特性。**任何絕對振幅特徵都被 confound**，必須做 per-recording / per-segment 正規化——這正是逼出「正規化 PSD」選擇的原因。
-   → [EDA/results/overview_by_drone.png](EDA/results/overview_by_drone.png)
+   → ![EDA/results/overview_by_drone.png](EDA/results/overview_by_drone.png)
 2. **削波（clipping）**：AIR/DIS/PHA 約 50–60% 錄製碰到 ADC full-scale；弱訊號群完全乾淨。兩檔 PHA 嚴重飽和（`BLUE/PHA_ON/PHA_0100_00` 30%、`CLEAN/PHA_ON/PHA_0000_01` 26% 樣本），頻譜分析應剔除。summary 表的 `clip_ratio` 逐檔量化削波程度。
-   → [EDA/results/box_clip_ratio.png](EDA/results/box_clip_ratio.png)
+   → ![EDA/results/box_clip_ratio.png](EDA/results/box_clip_ratio.png)
 3. 標量統計（`avg_power`、`rms`、`std`）沒有可靠的機型辨識力——被增益 confound 與組內飛行模式變異主導。尺度不變的 `iq_correlation`/`iq_imbalance_db` 較好（2 特徵 RF 5-fold ≈ 0.57），但疑似編碼了 per-session 接收機狀態，故不放入主模型。
 4. dB 值在 BI 工具中**絕不可跨錄製做 SUM 或 AVG 聚合**；應先對線性 `avg_power` 平均再轉換（`10·LOG10(AVERAGE(avg_power))`）。
 
@@ -128,7 +128,7 @@ verify/     scripts + results   # 魯棒性、leakage 與模型比較驗證
 | XGBoost | 正規化 PSD | 0.969 ± 0.006 | 0.987 |
 | CNN | spectrogram | 0.946 | 0.977 |
 
-→ [embedding/results/baseline_confusion.png](embedding/results/baseline_confusion.png) · [CNN/results/cnn_confusion.png](CNN/results/cnn_confusion.png)
+→ ![embedding/results/baseline_confusion.png](embedding/results/baseline_confusion.png) · ![CNN/results/cnn_confusion.png](CNN/results/cnn_confusion.png)
 
 - **頻譜形狀近乎線性可分**；XGBoost 對 LDA 沒有增益，代表結構是線性的、不需重模型。唯一有意義的混淆是 **MP1 ↔ MP2**（7–8%，同家族 OcuSync 圖傳）。
 - **CNN 沒有勝過它**（0.946），且 *惡化* MP2→MP1 混淆到 16%——最可能因為池化後的 spectrogram 只有 256 頻率 bins（~234 kHz/bin），PSD 則有 1024（~58.6 kHz/bin），區分同家族機型的細頻率結構被池化掉了。
@@ -143,14 +143,14 @@ verify/     scripts + results   # 魯棒性、leakage 與模型比較驗證
 | wifi | 0.80 | 0.75 | *0.98* | 0.91 |
 | both | 0.78 | 0.82 | 0.93 | *0.97* |
 
-→ [verify/results/interference_transfer.png](verify/results/interference_transfer.png)
+→ ![verify/results/interference_transfer.png](verify/results/interference_transfer.png)
 
 跨條件遷移掉約 12–15 個百分點但不崩盤：無人機訊號本身在未見過的干擾環境下仍支撐 ≥0.75，其餘 in-distribution 準確率依賴環境頻譜背景。WiFi↔Both 互轉維持高分（皆含 WiFi），證實失效模式是背景頻譜佔用改變。
 
 ### Session leakage probing + 表示相似度（CKA）
 
 對各表示做線性 probe（GroupKFold 以錄製為單位）；並計算兩者的 CKA。
-→ [verify/results/session_leakage_probe.png](verify/results/session_leakage_probe.png)
+→ ![verify/results/session_leakage_probe.png](verify/results/session_leakage_probe.png)
 
 | Probe 目標 | CNN embedding | PSD features | chance |
 |---|---|---|---|
@@ -166,7 +166,7 @@ verify/     scripts + results   # 魯棒性、leakage 與模型比較驗證
 ### 干擾遷移：CNN vs. PSD（統一協議）——假設被推翻
 
 對每個條件（runs 0–3）各訓練一個模型；對角線 = 同條件的 held-out run 4，非對角線 = 其他條件。
-→ [verify/results/cnn_vs_lda_interference_transfer.png](verify/results/cnn_vs_lda_interference_transfer.png)
+→ ![verify/results/cnn_vs_lda_interference_transfer.png](verify/results/cnn_vs_lda_interference_transfer.png)
 
 | | 對角線（held-out） | 非對角線（跨干擾） | 掉分 |
 |---|---|---|---|
@@ -179,7 +179,7 @@ verify/     scripts + results   # 魯棒性、leakage 與模型比較驗證
 ### 最短觀測窗長度
 
 單窗 LDA 準確率（leave-one-run-out、混合所有干擾、256-bin PSD）對窗長。
-→ [verify/results/segment_length_sweep.png](verify/results/segment_length_sweep.png)
+→ ![verify/results/segment_length_sweep.png](verify/results/segment_length_sweep.png)
 
 | 窗長 | 0.39 ms | 0.78 ms | 1.6 ms | 3.1 ms | 6.3 ms | 12.5 ms | 25 ms | 50 ms |
 |---|---|---|---|---|---|---|---|---|
@@ -191,7 +191,7 @@ verify/     scripts + results   # 魯棒性、leakage 與模型比較驗證
 ### 單一長窗 vs. 多個短窗投票
 
 把固定的觀測預算花在 V 個不重疊短窗（各自分類後投票），而非一個長窗。
-→ [verify/results/multiwindow_voting.png](verify/results/multiwindow_voting.png)
+→ ![verify/results/multiwindow_voting.png](verify/results/multiwindow_voting.png)
 
 - **soft voting（平均類別機率）勝過 hard voting** 約 0.5–1 個百分點——若要投票就用 soft。
 - **但在相同觀測時間下，單一長窗仍 ≥ 投票**。單一 25 ms 窗（0.95）等同於 12.5 ms × 3（37.5 ms，0.948）或 6.25 ms × 7（43.8 ms，0.945）需要*更長*時間才達到的準確率；基本窗越短飽和越低（3.1 ms × N 飽和於約 0.92）。
@@ -200,9 +200,9 @@ verify/     scripts + results   # 魯棒性、leakage 與模型比較驗證
 ### 增益不變性與歸因（加分項檢驗）
 
 - **增益擾動壓力測試**：施加 ±20 dB 的測試時增益，正規化 PSD 全程平坦維持 0.96，未正規化的 raw log-power 則崩潰（−20 dB 為 0.51、+20 dB 為 0.60）——確認正規化使特徵增益不變。
-  → [verify/results/gain_perturbation.png](verify/results/gain_perturbation.png)
+  → ![verify/results/gain_perturbation.png](verify/results/gain_perturbation.png)
 - **Grad-CAM**：在 clean 訓練的 CNN 上，class activation 落在各機型佔用的頻帶，**而非** 0 MHz 的 DC/LO-leakage 線——模型看的是訊號，不是接收端 artifact；各機型有不同頻譜足跡。
-  → [CNN/results/gradcam.png](CNN/results/gradcam.png)
+  → ![CNN/results/gradcam.png](CNN/results/gradcam.png)
 
 ### 誠實聲明（caveats）
 

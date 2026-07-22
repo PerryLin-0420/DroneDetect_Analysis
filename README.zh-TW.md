@@ -124,14 +124,16 @@ verify/     scripts + results   # 魯棒性、leakage 與模型比較驗證
 
 | 模型 | 特徵 | Segment 準確率 | Recording 準確率 |
 |---|---|---|---|
-| **LDA** | 正規化 PSD | **0.972 ± 0.004** | **1.000** |
-| XGBoost | 正規化 PSD | 0.969 ± 0.006 | 0.987 |
-| CNN | spectrogram | 0.946 | 0.977 |
+| **LDA** | 正規化 1024-bin PSD | **0.972 ± 0.004** | **1.000** |
+| XGBoost | 正規化 1024-bin PSD | 0.969 ± 0.006 | 0.987 |
+| CNN | 256-bin spectrogram | 0.946 ± 0.009 | 0.977 |
+| CNN | 512-bin spectrogram | 0.911 ± 0.030 | 0.933 |
+| CNN | 1024-bin spectrogram | *(掃描進行中)* | |
 
 → ![embedding/results/baseline_confusion.png](embedding/results/baseline_confusion.png) · ![CNN/results/cnn_confusion.png](CNN/results/cnn_confusion.png)
 
 - **頻譜形狀近乎線性可分**；XGBoost 對 LDA 沒有增益，代表結構是線性的、不需重模型。唯一有意義的混淆是 **MP1 ↔ MP2**（7–8%，同家族 OcuSync 圖傳）。
-- **CNN 沒有勝過它**（0.946），且 *惡化* MP2→MP1 混淆到 16%——最可能因為池化後的 spectrogram 只有 256 頻率 bins（~234 kHz/bin），PSD 則有 1024（~58.6 kHz/bin），區分同家族機型的細頻率結構被池化掉了。
+- **CNN 沒有勝過它，而且與直覺相反——提高頻率解析度反而讓它*更差*：** 256-bin 0.946 → 512-bin 0.911，且 fold 間變異增為三倍（±0.009 → ±0.030）。所以先前「CNN 輸是因為被池化到 256 bins」的假設*並非全貌*。更細的 spectrogram 維度更高，但每個 frame 帶入更多未經時間平均的雜訊；在僅約 15k segment 下，固定容量的 CNN 反而過擬合。LDA 的優勢正是它的 PSD 是整段 Welch **時間平均**——一個低方差的高解析度估計，CNN 無法從帶噪的逐 frame column 重建出來。（1024-bin CNN 執行中以確認趨勢。）
 - **但 CNN 學到的是互補線索，不是劣化版**。McNemar：CNN vs. 任一 PSD 模型都極顯著（p ≈ 1e-30…1e-37），而 LDA vs. XGBoost 不顯著（p ≈ 0.05）；CNN 獨立答對約 300 個 PSD 模型漏掉的 segment，三模型多數決達 **0.980**。所以 PSD 頻譜形狀是主判別訊號，時頻結構是次要且正交的補充線索。
 
 ### 干擾遷移魯棒性（LDA）

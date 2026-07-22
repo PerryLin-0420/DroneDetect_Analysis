@@ -124,14 +124,16 @@ verify/     scripts + results   # robustness, leakage & model-comparison checks
 
 | Model | Feature | Segment acc | Recording acc |
 |---|---|---|---|
-| **LDA** | normalized PSD | **0.972 ± 0.004** | **1.000** |
-| XGBoost | normalized PSD | 0.969 ± 0.006 | 0.987 |
-| CNN | spectrogram | 0.946 | 0.977 |
+| **LDA** | normalized 1024-bin PSD | **0.972 ± 0.004** | **1.000** |
+| XGBoost | normalized 1024-bin PSD | 0.969 ± 0.006 | 0.987 |
+| CNN | 256-bin spectrogram | 0.946 ± 0.009 | 0.977 |
+| CNN | 512-bin spectrogram | 0.911 ± 0.030 | 0.933 |
+| CNN | 1024-bin spectrogram | *(sweep in progress)* | |
 
 → ![embedding/results/baseline_confusion.png](embedding/results/baseline_confusion.png) · ![CNN/results/cnn_confusion.png](CNN/results/cnn_confusion.png)
 
 - **Spectral shape is almost linearly separable** across the 7 models; XGBoost adds nothing over LDA, so the structure is linear and needs no heavy model. The only meaningful confusion is **MP1 ↔ MP2** (7–8%, same-family OcuSync downlinks).
-- **The CNN does not beat it** (0.946) and *worsens* MP2→MP1 confusion to 16% — likely because its pooled spectrogram has 256 frequency bins (~234 kHz/bin) vs. the PSD's 1024 (~58.6 kHz/bin), pooling away the fine detail that separates same-family models.
+- **The CNN does not beat it, and — counter to intuition — raising its frequency resolution makes it *worse*:** 256-bin 0.946 → 512-bin 0.911, with the fold-to-fold variance tripling (±0.009 → ±0.030). So the earlier "CNN loses because it was pooled to 256 bins" hypothesis is *not* the whole story. A finer spectrogram is higher-dimensional but carries more un-time-averaged noise per frame; with only ~15k segments the fixed-capacity CNN overfits it. LDA's edge is exactly that its PSD is a full-segment Welch *time-average* — a low-variance high-resolution estimate the CNN never reconstructs from noisy per-frame columns. (1024-bin CNN running to confirm the trend.)
 - **But the CNN learns complementary cues, not a degraded copy.** McNemar: CNN vs. either PSD model is highly significant (p ≈ 1e-30…1e-37) while LDA vs. XGBoost is not (p ≈ 0.05); the CNN is exclusively right on ~300 segments the PSD models miss, and a 3-model majority vote reaches **0.980**. So PSD spectral shape is the primary signal; time-frequency structure is a secondary, orthogonal cue.
 
 ### Interference-transfer robustness (LDA)

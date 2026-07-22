@@ -21,9 +21,6 @@ Summary_duckdb/*
 # Large binary feature tensors (regenerable from raw parquet)
 *.npy
 
-# Trained model weights (saved locally, reproducible from fixed seeds)
-*.pt
-
 # Python
 __pycache__/
 *.pyc

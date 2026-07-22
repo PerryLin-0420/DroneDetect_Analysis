@@ -8,6 +8,7 @@
 ### predictions, and penultimate-layer embeddings for the verify/ stage.     ###
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -20,6 +21,16 @@ from sklearn.metrics import accuracy_score, confusion_matrix
 
 sys.stdout.reconfigure(line_buffering=True)
 torch.manual_seed(0)
+
+# Use the GPU if one is available; otherwise train on CPU with cores-minus-2 threads
+# (leaves headroom for the OS and other work).
+if torch.cuda.is_available():
+    DEVICE = torch.device("cuda")
+    print(f"Using GPU: {torch.cuda.get_device_name(0)}")
+else:
+    DEVICE = torch.device("cpu")
+    torch.set_num_threads(max(1, (os.cpu_count() or 4) - 2))
+    print(f"Using CPU with {torch.get_num_threads()} threads")
 np.random.seed(0)
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -90,7 +101,7 @@ def train_fold(X, y, meta, fold):
     ytr = torch.from_numpy(y[~test_mask]).long()
     Xte = torch.from_numpy(X[test_mask]).unsqueeze(1)
 
-    model = SmallCNN(len(DRONE_ORDER))
+    model = SmallCNN(len(DRONE_ORDER)).to(DEVICE)
     opt = torch.optim.AdamW(model.parameters(), lr=LR)
     lossf = nn.CrossEntropyLoss()
 
@@ -101,7 +112,7 @@ def train_fold(X, y, meta, fold):
         total, t0 = 0.0, time.time()
         for i in range(0, n, BATCH):
             idx = perm[i:i + BATCH]
-            xb, yb = augment(Xtr[idx]), ytr[idx]
+            xb, yb = augment(Xtr[idx].to(DEVICE)), ytr[idx].to(DEVICE)
             opt.zero_grad()
             loss = lossf(model(xb), yb)
             loss.backward()
@@ -120,9 +131,9 @@ def train_fold(X, y, meta, fold):
     preds, embs = [], []
     with torch.no_grad():
         for i in range(0, len(Xte), 256):
-            xb = Xte[i:i + 256]
-            preds.append(model(xb).argmax(1).numpy())
-            embs.append(model(xb, return_embedding=True).numpy())
+            xb = Xte[i:i + 256].to(DEVICE)
+            preds.append(model(xb).argmax(1).cpu().numpy())
+            embs.append(model(xb, return_embedding=True).cpu().numpy())
     return test_mask, np.concatenate(preds), np.concatenate(embs)
 
 

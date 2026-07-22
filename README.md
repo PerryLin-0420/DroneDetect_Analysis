@@ -96,7 +96,7 @@ verify/     scripts + results   # robustness, leakage & model-comparison checks
 ### 5. Spectrogram CNN ([CNN/](CNN))
 
 - [extract_spectrograms.py](CNN/scripts/extract_spectrograms.py): same 50 ms segments → STFT (nperseg 1024, hop 512, two-sided), mean-pooled in the linear power domain to a 256(F)×128(T) grid, then dB, stored as float16 (~1 GB, not committed). Frequency bins are a CLI arg (256 default; 512 for the higher-resolution run).
-- [train_cnn.py](CNN/scripts/train_cnn.py): ~200k-param 4-block 2D CNN, per-segment z-score (removes gain — additive in log domain), time-roll + noise augmentation, leave-one-run-out CV. CPU-trained (no CUDA GPU present; GPU only changes speed, not results). Saves per-fold weights to `CNN/models/` and exports predictions + 128-d embeddings for the comparison stage.
+- [train_cnn.py](CNN/scripts/train_cnn.py): ~200k-param 4-block 2D CNN, per-segment z-score (removes gain — additive in log domain), time-roll + noise augmentation, leave-one-run-out CV. Auto-detects a CUDA GPU, else trains on CPU with `cores − 2` threads; device only affects speed, not results. Saves per-fold weights to `CNN/models/` (committed — ~0.4 MB each) and exports predictions + 128-d embeddings for the comparison stage.
 - [gradcam.py](CNN/scripts/gradcam.py): Grad-CAM over the last conv block, overlaid on one clean spectrogram per drone.
 
 ### 6. Verification ([verify/](verify))
@@ -226,15 +226,3 @@ Spending a fixed observation budget on V non-overlapping short windows (classify
 - **Model ≡ session confound is structurally unresolvable here.** Each model was likely recorded in one session; leave-one-run-out and the probes only rule out the *within-session repeat* fingerprint, not the session identity. Cross-SDR / cross-day generalisation is unverified.
 - **No drone-absent recordings** — supports model *classification*, not presence *detection* (that needs external negative samples).
 - **256-bin underestimate:** the window-length and voting studies reuse the 256-bin spectrogram; native 1024-bin PSD is ~1 pt higher. Trends are unaffected.
-
-## Roadmap
-
-1. ~~Lossless conversion + verification~~ ✔
-2. ~~Summary DB + EDA + data-quality audit~~ ✔
-3. ~~PSD embedding + linear/GBM baselines + interference-transfer check~~ ✔
-4. ~~Spectrogram CNN + McNemar/ensemble comparison~~ ✔
-5. ~~Session-leakage probing + CKA~~ ✔
-6. ~~CNN interference-transfer vs. LDA~~ ✔ (hypothesis refuted)
-7. ~~Minimum-window-length sweep + multi-window voting~~ ✔
-8. ~~Grad-CAM attribution + gain-perturbation stress test~~ ✔
-9. ~~Resolution sweep (256/512/1024) across baseline, transfer, window-length~~ ✔ (higher resolution hurts the CNN, helps the PSD; time-averaging is decisive)

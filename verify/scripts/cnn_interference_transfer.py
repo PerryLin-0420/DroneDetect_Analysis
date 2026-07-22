@@ -22,7 +22,7 @@ from sklearn.metrics import accuracy_score
 
 sys.stdout.reconfigure(line_buffering=True)
 sys.path.insert(0, str(Path(__file__).resolve().parent / ".." / ".." / "CNN" / "scripts"))
-from train_cnn import SmallCNN  # noqa: E402
+from train_cnn import SmallCNN, DEVICE  # noqa: E402  (DEVICE: GPU if available else CPU)
 
 torch.manual_seed(0)
 np.random.seed(0)
@@ -63,7 +63,7 @@ def augment(xb):
 def train_cnn(X, y):
     Xt = torch.from_numpy(X).unsqueeze(1)
     yt = torch.from_numpy(y).long()
-    model = SmallCNN(len(DRONE_ORDER))
+    model = SmallCNN(len(DRONE_ORDER)).to(DEVICE)
     opt = torch.optim.AdamW(model.parameters(), lr=LR)
     lossf = nn.CrossEntropyLoss()
     n = len(Xt)
@@ -73,7 +73,7 @@ def train_cnn(X, y):
         for i in range(0, n, BATCH):
             idx = perm[i:i + BATCH]
             opt.zero_grad()
-            loss = lossf(model(augment(Xt[idx])), yt[idx])
+            loss = lossf(model(augment(Xt[idx].to(DEVICE))), yt[idx].to(DEVICE))
             loss.backward()
             opt.step()
     return model
@@ -85,7 +85,7 @@ def cnn_predict(model, X):
     out = []
     with torch.no_grad():
         for i in range(0, len(Xt), 256):
-            out.append(model(Xt[i:i + 256]).argmax(1).numpy())
+            out.append(model(Xt[i:i + 256].to(DEVICE)).argmax(1).cpu().numpy())
     return np.concatenate(out)
 
 

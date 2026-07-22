@@ -96,7 +96,7 @@ verify/     scripts + results   # 魯棒性、leakage 與模型比較驗證
 ### 5. Spectrogram CNN（[CNN/](CNN)）
 
 - [extract_spectrograms.py](CNN/scripts/extract_spectrograms.py)：沿用 50 ms segment → STFT（nperseg 1024、hop 512、雙邊），在線性 power 域 mean-pool 到 256(F)×128(T) 網格後轉 dB，存成 float16（約 1 GB，不進版控）。頻率 bins 由 CLI 參數指定（預設 256；高解析度跑用 512）。
-- [train_cnn.py](CNN/scripts/train_cnn.py)：約 20 萬參數的 4 層 2D CNN、per-segment z-score（去增益，log 域中增益為加性常數）、time-roll + 雜訊 augmentation、leave-one-run-out CV。以 CPU 訓練（無 CUDA GPU；GPU 只影響速度不影響結果）。各 fold 權重存到 `CNN/models/`，並輸出預測與 128 維 embedding 供比較階段使用。
+- [train_cnn.py](CNN/scripts/train_cnn.py)：約 20 萬參數的 4 層 2D CNN、per-segment z-score（去增益，log 域中增益為加性常數）、time-roll + 雜訊 augmentation、leave-one-run-out CV。自動偵測 CUDA GPU，無則以 CPU、`核數 − 2` 執行緒訓練；裝置只影響速度不影響結果。各 fold 權重存到 `CNN/models/`（已進版控，每個約 0.4 MB），並輸出預測與 128 維 embedding 供比較階段使用。
 - [gradcam.py](CNN/scripts/gradcam.py)：對最後 conv 層做 Grad-CAM，疊在每個機型的一張 clean spectrogram 上。
 
 ### 6. 驗證（[verify/](verify)）
@@ -227,14 +227,3 @@ verify/     scripts + results   # 魯棒性、leakage 與模型比較驗證
 - **沒有「無人機不在場」的錄製**——支援機型*分類*，非在場*偵測*（後者需外部負樣本）。
 - **256-bin 低估**：窗長與投票研究重用 256-bin spectrogram；原生 1024-bin PSD 約高 1 個百分點。趨勢不受影響。
 
-## Roadmap
-
-1. ~~無損轉換 + 驗證~~ ✔
-2. ~~Summary DB + EDA + 資料品質稽核~~ ✔
-3. ~~PSD embedding + 線性/GBM baseline + 干擾遷移檢驗~~ ✔
-4. ~~Spectrogram CNN + McNemar/ensemble 比較~~ ✔
-5. ~~Session leakage probing + CKA~~ ✔
-6. ~~CNN 干擾遷移 vs. LDA~~ ✔（假設被推翻）
-7. ~~最短窗長度 sweep + 多窗投票~~ ✔
-8. ~~Grad-CAM 歸因 + 增益擾動壓力測試~~ ✔
-9. ~~解析度掃描（256/512/1024）跨 baseline、遷移、窗長~~ ✔（提高解析度傷害 CNN、幫助 PSD；時間平均是決勝因素）

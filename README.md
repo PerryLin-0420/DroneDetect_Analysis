@@ -8,7 +8,7 @@ Lossless conversion of the DroneDetect RF IQ dataset to parquet, a DuckDB summar
 
 **A normalized 1024-bin Welch PSD fed to a linear classifier (LDA) is the best-balanced drone-model classifier on this dataset** — 0.97 segment / 1.00 recording accuracy across the 7 models, most robust across interference, near-zero training cost, fully interpretable. This held up across every verification stage below; a spectrogram CNN learns *complementary* cues (significant McNemar difference, low CKA, ensemble gain) but never wins on accuracy or robustness.
 
-- **Why PSD wins:** data quality forces it (a ~15 dB gain confound and clipping make absolute-amplitude features unusable, so the normalized PSD is the natural gain-invariant choice), spectral shape is almost linearly separable (XGBoost adds nothing over LDA), and the CNN scores lower while *worsening* the hardest pair and transferring across interference *worse*.
+- **Why PSD wins:** data quality forces it (a ~15 dB gain confound and clipping make absolute-amplitude features unusable, so the normalized PSD is the natural gain-invariant choice), spectral shape is almost linearly separable (XGBoost adds nothing over LDA), and the CNN scores lower and transfers across interference worse — even at *identical* 1024-bin resolution (0.874 vs. 0.972). The decisive factor is feature-level time-averaging, not resolution or model depth.
 - **Deployment window:** with continuous clean observation prefer a single long window — **≈25 ms → 0.95**, **≈12.5 ms → 0.92**. Multi-window voting (use *soft* voting) does not beat one long window at equal observation time.
 - **Hardest residual:** the same-family MP1↔MP2 pair (DJI Mavic Pro vs. Pro 2, same OcuSync downlink).
 - **Structural limit:** model ≡ recording-session confound — cross-SDR / cross-day generalisation cannot be verified with this dataset.
@@ -128,13 +128,28 @@ verify/     scripts + results   # robustness, leakage & model-comparison checks
 | XGBoost | normalized 1024-bin PSD | 0.969 ± 0.006 | 0.987 |
 | CNN | 256-bin spectrogram | 0.946 ± 0.009 | 0.977 |
 | CNN | 512-bin spectrogram | 0.911 ± 0.030 | 0.933 |
-| CNN | 1024-bin spectrogram | *(sweep in progress)* | |
+| CNN | 1024-bin spectrogram | 0.874 ± 0.042 | 0.913 |
 
 → ![embedding/results/baseline_confusion.png](embedding/results/baseline_confusion.png) · ![CNN/results/cnn_confusion.png](CNN/results/cnn_confusion.png)
 
 - **Spectral shape is almost linearly separable** across the 7 models; XGBoost adds nothing over LDA, so the structure is linear and needs no heavy model. The only meaningful confusion is **MP1 ↔ MP2** (7–8%, same-family OcuSync downlinks).
-- **The CNN does not beat it, and — counter to intuition — raising its frequency resolution makes it *worse*:** 256-bin 0.946 → 512-bin 0.911, with the fold-to-fold variance tripling (±0.009 → ±0.030). So the earlier "CNN loses because it was pooled to 256 bins" hypothesis is *not* the whole story. A finer spectrogram is higher-dimensional but carries more un-time-averaged noise per frame; with only ~15k segments the fixed-capacity CNN overfits it. LDA's edge is exactly that its PSD is a full-segment Welch *time-average* — a low-variance high-resolution estimate the CNN never reconstructs from noisy per-frame columns. (1024-bin CNN running to confirm the trend.)
+- **The CNN does not beat it, and raising its frequency resolution makes it monotonically *worse*** (0.946 → 0.911 → 0.874, variance growing). See the resolution sweep below — this settles that the CNN's loss is not a resolution artifact.
 - **But the CNN learns complementary cues, not a degraded copy.** McNemar: CNN vs. either PSD model is highly significant (p ≈ 1e-30…1e-37) while LDA vs. XGBoost is not (p ≈ 0.05); the CNN is exclusively right on ~300 segments the PSD models miss, and a 3-model majority vote reaches **0.980**. So PSD spectral shape is the primary signal; time-frequency structure is a secondary, orthogonal cue.
+
+### Resolution sweep — it is time-averaging, not resolution or model depth, that wins
+
+To rule out "the CNN only lost because its spectrogram was coarser than the 1024-bin PSD", the same three studies were run at 256 / 512 / 1024 frequency bins. Raising resolution has **opposite** effects depending on how the bins are used:
+
+→ ![verify/results/resolution_summary.png](verify/results/resolution_summary.png)
+
+| Frequency bins | 2D-spectrogram CNN (per-frame) | LDA on time-averaged PSD | transfer off-diagonal (CNN) |
+|---|---|---|---|
+| 256 | 0.946 | 0.965 | 0.72 |
+| 512 | 0.911 | 0.966 | 0.70 |
+| 1024 | **0.874** | **0.972** | 0.67 |
+
+- **At the *same* 1024-bin resolution, the CNN scores 0.874 while LDA scores 0.972 — a 10-point gap.** Higher resolution *hurts* the per-frame CNN (more dimensions, more un-time-averaged per-frame noise → the ~200k-param model overfits ~15k segments) but *helps* the time-averaged PSD (more clean spectral detail). So the decisive factor is **feature-level time-averaging (Welch), not frequency resolution and not model depth** — this directly answers the "is a same-resolution CNN possible / would it win?" question: yes it's possible, and it loses decisively.
+- **The CNN's shrinking transfer *drop* (0.19 → 0.14 → 0.12, even below LDA's 0.13) is an artifact, not robustness:** its off-diagonal accuracy is only 0.67 vs. LDA's 0.83. The drop is small only because the in-distribution ceiling is already low — there is little left to lose.
 
 ### Interference-transfer robustness (LDA)
 
@@ -222,4 +237,4 @@ Spending a fixed observation budget on V non-overlapping short windows (classify
 6. ~~CNN interference-transfer vs. LDA~~ ✔ (hypothesis refuted)
 7. ~~Minimum-window-length sweep + multi-window voting~~ ✔
 8. ~~Grad-CAM attribution + gain-perturbation stress test~~ ✔
-9. In progress: higher-frequency-resolution (512-bin) CNN re-run to try to close the MP1↔MP2 gap.
+9. ~~Resolution sweep (256/512/1024) across baseline, transfer, window-length~~ ✔ (higher resolution hurts the CNN, helps the PSD; time-averaging is decisive)

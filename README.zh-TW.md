@@ -8,7 +8,7 @@
 
 **在此資料集上，正規化的 1024-bin Welch PSD 餵給線性分類器（LDA）是平衡最佳的無人機機型分類器**——7 機型 segment 0.97 / recording 1.00 準確率、跨干擾最魯棒、訓練成本近乎零、完全可解釋。此結論在下方每一個驗證階段都成立；spectrogram CNN 學到*互補*線索（McNemar 顯著、CKA 低、ensemble 有增益），但在準確率與魯棒性上都未勝出。
 
-- **為什麼 PSD 勝出：** 資料品質逼出這個選擇（約 15 dB 的 gain confound 與削波使絕對振幅特徵不可用，正規化 PSD 是自然的增益不變選擇）、頻譜形狀近乎線性可分（XGBoost 對 LDA 沒有增益）、CNN 準確率更低且*惡化*最難的機型對、跨干擾遷移*更差*。
+- **為什麼 PSD 勝出：** 資料品質逼出這個選擇（約 15 dB 的 gain confound 與削波使絕對振幅特徵不可用，正規化 PSD 是自然的增益不變選擇）、頻譜形狀近乎線性可分（XGBoost 對 LDA 沒有增益）、CNN 準確率更低且跨干擾遷移更差——即使在*相同*的 1024-bin 解析度下（0.874 vs. 0.972）。決定性因素是特徵層的時間平均,不是解析度或模型深度。
 - **部署窗長：** 連續且乾淨觀測下優先用單一長窗——**約 25 ms → 0.95**、**約 12.5 ms → 0.92**。多窗投票（要用 *soft* voting）在相同觀測時間下不勝單一長窗。
 - **最難的殘留問題：** 同家族的 MP1↔MP2（DJI Mavic Pro vs. Pro 2，相同 OcuSync 圖傳）。
 - **結構性限制：** 機型 ≡ 錄製 session 的 confound——跨 SDR / 跨日期泛化無法用此資料集驗證。
@@ -128,13 +128,28 @@ verify/     scripts + results   # 魯棒性、leakage 與模型比較驗證
 | XGBoost | 正規化 1024-bin PSD | 0.969 ± 0.006 | 0.987 |
 | CNN | 256-bin spectrogram | 0.946 ± 0.009 | 0.977 |
 | CNN | 512-bin spectrogram | 0.911 ± 0.030 | 0.933 |
-| CNN | 1024-bin spectrogram | *(掃描進行中)* | |
+| CNN | 1024-bin spectrogram | 0.874 ± 0.042 | 0.913 |
 
 → ![embedding/results/baseline_confusion.png](embedding/results/baseline_confusion.png) · ![CNN/results/cnn_confusion.png](CNN/results/cnn_confusion.png)
 
 - **頻譜形狀近乎線性可分**；XGBoost 對 LDA 沒有增益，代表結構是線性的、不需重模型。唯一有意義的混淆是 **MP1 ↔ MP2**（7–8%，同家族 OcuSync 圖傳）。
-- **CNN 沒有勝過它，而且與直覺相反——提高頻率解析度反而讓它*更差*：** 256-bin 0.946 → 512-bin 0.911，且 fold 間變異增為三倍（±0.009 → ±0.030）。所以先前「CNN 輸是因為被池化到 256 bins」的假設*並非全貌*。更細的 spectrogram 維度更高，但每個 frame 帶入更多未經時間平均的雜訊；在僅約 15k segment 下，固定容量的 CNN 反而過擬合。LDA 的優勢正是它的 PSD 是整段 Welch **時間平均**——一個低方差的高解析度估計，CNN 無法從帶噪的逐 frame column 重建出來。（1024-bin CNN 執行中以確認趨勢。）
+- **CNN 沒有勝過它，而且提高頻率解析度讓它單調*更差***（0.946 → 0.911 → 0.874，變異持續增大）。見下方解析度掃描——這確定了 CNN 輸並非解析度的假象。
 - **但 CNN 學到的是互補線索，不是劣化版**。McNemar：CNN vs. 任一 PSD 模型都極顯著（p ≈ 1e-30…1e-37），而 LDA vs. XGBoost 不顯著（p ≈ 0.05）；CNN 獨立答對約 300 個 PSD 模型漏掉的 segment，三模型多數決達 **0.980**。所以 PSD 頻譜形狀是主判別訊號，時頻結構是次要且正交的補充線索。
+
+### 解析度掃描——決勝的是時間平均，不是解析度也不是模型深度
+
+為了排除「CNN 只是因為 spectrogram 比 1024-bin PSD 粗才輸」,把同樣三項研究在 256 / 512 / 1024 頻率 bin 各跑一次。提高解析度依「bin 如何被使用」而有**相反**效果:
+
+→ ![verify/results/resolution_summary.png](verify/results/resolution_summary.png)
+
+| 頻率 bins | 2D-spectrogram CNN（逐 frame） | LDA on 時間平均 PSD | 遷移 off-diagonal（CNN） |
+|---|---|---|---|
+| 256 | 0.946 | 0.965 | 0.72 |
+| 512 | 0.911 | 0.966 | 0.70 |
+| 1024 | **0.874** | **0.972** | 0.67 |
+
+- **在*相同*的 1024-bin 解析度下,CNN 只有 0.874,LDA 是 0.972——差 10 個百分點。** 提高解析度*傷害*逐 frame CNN（維度更高、每 frame 未經時間平均的雜訊更多 → 約 20 萬參數模型在約 15k segment 上過擬合）,卻*幫助*時間平均 PSD（更多乾淨的頻譜細節）。所以決定性因素是**特徵層的時間平均（Welch）,不是頻率解析度、也不是模型深度**——這直接回答了「同等解析度 CNN 做得到嗎/會贏嗎」:做得到,而且確定性地輸。
+- **CNN 縮小的遷移*掉分*（0.19 → 0.14 → 0.12,甚至低於 LDA 的 0.13）是假象,不是魯棒性:** 它的 off-diagonal 絕對準確率只有 0.67,LDA 是 0.83。掉分小只因為 in-distribution 天花板本來就低,沒什麼可掉。
 
 ### 干擾遷移魯棒性（LDA）
 
@@ -222,4 +237,4 @@ verify/     scripts + results   # 魯棒性、leakage 與模型比較驗證
 6. ~~CNN 干擾遷移 vs. LDA~~ ✔（假設被推翻）
 7. ~~最短窗長度 sweep + 多窗投票~~ ✔
 8. ~~Grad-CAM 歸因 + 增益擾動壓力測試~~ ✔
-9. 進行中：更高頻率解析度（512-bin）CNN 重跑，嘗試縮小 MP1↔MP2 差距。
+9. ~~解析度掃描（256/512/1024）跨 baseline、遷移、窗長~~ ✔（提高解析度傷害 CNN、幫助 PSD；時間平均是決勝因素）

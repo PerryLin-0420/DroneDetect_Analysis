@@ -7,6 +7,8 @@ import numpy as np
 import pandas as pd
 from attrs import define, field
 
+import iq_codec
+
 SAMPLE_RATE_HZ = 60_000_000  # complex samples/sec (1.2e8 samples / 2s, per dataset author)
 
 
@@ -66,26 +68,30 @@ class LoadDataTransferParquet:
             print(f"Error loading data from {relative_path}: {e}")
             return None
 
-    def transfer_data(self, data: np.ndarray) -> pd.DataFrame:
+    def transfer_data(self, data: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
         try:
             # no explicit index column: samples are written in source order and parquet
             # preserves row order, so the row position itself is the sample index
-            df = pd.DataFrame({
-                'I': data.real,
-                'Q': data.imag,
-            })
-            return df
+            return np.ascontiguousarray(data.real), np.ascontiguousarray(data.imag)
         except Exception as e:
             print(f"Error transferring data: {e}")
             return None
 
-    def save_to_parquet(self, df: pd.DataFrame, output_path: Path):
+    def save_to_parquet(self, iq: tuple[np.ndarray, np.ndarray], output_path: Path):
+        i, q = iq
+        tmp_path = output_path.with_suffix(".parquet.tmp")
         try:
-            # zstd is lossless (like all parquet codecs); chosen over snappy for a better
-            # size/IO trade-off. Float values are stored bit-exact regardless of codec.
-            df.to_parquet(output_path, engine='pyarrow', index=False, compression='zstd')
+            try:
+                # 12-bit ADC data (values k / 2048) goes through the lossless block codec
+                iq_codec.write_iq_parquet(tmp_path, i, q)
+            except iq_codec.CodecError as e:
+                # data that does not fit the codec is kept as plain float32 I/Q, still bit-exact
+                print(f"Codec not applicable ({e}); writing plain float32 I/Q for {output_path.name}")
+                pd.DataFrame({"I": i, "Q": q}).to_parquet(tmp_path, engine="pyarrow", index=False, compression="zstd")
+            tmp_path.replace(output_path)
         except Exception as e:
             print(f"Error saving to parquet: {e}")
+            tmp_path.unlink(missing_ok=True)
 
     def convert_all(self):
         relative_paths = self.find_dat_files()
@@ -107,13 +113,13 @@ class LoadDataTransferParquet:
             if data is None:
                 continue
 
-            df = self.transfer_data(data)
+            iq = self.transfer_data(data)
             del data  # free the ~1GB complex array before writing
-            if df is None:
+            if iq is None:
                 continue
 
-            self.save_to_parquet(df, output_path)
-            del df  # free the DataFrame before moving to the next file
+            self.save_to_parquet(iq, output_path)
+            del iq  # free the I/Q arrays before moving to the next file
 
         print("Done.")
 

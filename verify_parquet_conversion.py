@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 import pyarrow.parquet as pq
 
+import iq_codec
 from load_data_transfer_parquet import LoadDataTransferParquet
 
 # Ground-truth source: set SOURCE_ZIP to the archive to verify without extracting,
@@ -19,8 +20,9 @@ SRC_FOLDER = Path("D:/DroneEDA/DroneDetect_V2/DroneDetect_V2")
 OUT = Path("D:/DroneEDA/DroneDetect_V2_parquet")
 SAMPLE_SIZE = 20
 SEED = 42
-# row order is the sample order, so the schema is just the two float32 channels
-EXPECTED_COLUMNS = ["I", "Q"]
+# a file is either in the block-codec layout (schema from iq_codec) or plain float32 I/Q
+EXPECTED_CODEC_COLUMNS = iq_codec.build_schema(0).names
+EXPECTED_PLAIN_COLUMNS = iq_codec.LEGACY_COLUMNS
 
 
 def build_source_sizes(loader: LoadDataTransferParquet) -> dict[str, int]:
@@ -47,15 +49,16 @@ def fast_pass(loader, relative_paths, source_sizes):
             missing.append(rel)
             continue
         expected = source_sizes[rel] // 8
-        pf = pq.ParquetFile(out)
-        actual = pf.metadata.num_rows
-        if actual != expected:
-            mismatches.append((rel, expected, actual))
-        elif pf.schema_arrow.names != EXPECTED_COLUMNS:
-            # e.g. legacy files that still carry the redundant `index` column
-            schema_bad.append((rel, pf.schema_arrow.names))
-        else:
-            ok += 1
+        with pq.ParquetFile(out) as pf:
+            names = pf.schema_arrow.names
+            coded = iq_codec.is_coded(pf.schema_arrow)
+            actual = iq_codec.num_samples(out)
+            if names != (EXPECTED_CODEC_COLUMNS if coded else EXPECTED_PLAIN_COLUMNS):
+                schema_bad.append((rel, names))
+            elif actual != expected:
+                mismatches.append((rel, expected, actual))
+            else:
+                ok += 1
     return ok, missing, mismatches, schema_bad
 
 
@@ -66,14 +69,20 @@ def bit_exact_check(loader, relative_path) -> bool:
     I_truth, Q_truth = raw[0::2], raw[1::2]
 
     out = loader.resolve_output_path(relative_path)
-    df = pq.read_table(out, columns=["I", "Q"]).to_pandas()
 
-    # element-wise comparison against the source also proves sample order: the row
-    # position is the sample index, so any reordering would fail these checks.
+    # stream the decoded file chunk by chunk and compare against the source in order; a match on
+    # every chunk also proves sample order (the row position is the sample index).
     # compare as uint32 bit patterns so NaN payloads / -0.0 are verified bit-exact too
-    I_ok = np.array_equal(df["I"].to_numpy().view(np.uint32), I_truth.view(np.uint32))
-    Q_ok = np.array_equal(df["Q"].to_numpy().view(np.uint32), Q_truth.view(np.uint32))
-    return I_ok and Q_ok
+    pos = 0
+    for i_chunk, q_chunk in iq_codec.iter_iq(out):
+        n = len(i_chunk)
+        if pos + n > len(I_truth):
+            return False
+        if not (np.array_equal(i_chunk.view(np.uint32), I_truth[pos:pos + n].view(np.uint32))
+                and np.array_equal(q_chunk.view(np.uint32), Q_truth[pos:pos + n].view(np.uint32))):
+            return False
+        pos += n
+    return pos == len(I_truth)
 
 
 def main():
@@ -96,7 +105,7 @@ def main():
     for rel, expected, actual in mismatches:
         print(f"  ROW MISMATCH: {rel} expected={expected} actual={actual}")
     for rel, names in schema_bad:
-        print(f"  SCHEMA MISMATCH: {rel} columns={names} expected={EXPECTED_COLUMNS}")
+        print(f"  SCHEMA MISMATCH: {rel} columns={names} expected={EXPECTED_CODEC_COLUMNS} or {EXPECTED_PLAIN_COLUMNS}")
 
     print(f"\n=== Pass 2: bit-exact spot check ({SAMPLE_SIZE} random files) ===")
     rng = random.Random(SEED)

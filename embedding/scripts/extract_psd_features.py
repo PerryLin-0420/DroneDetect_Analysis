@@ -12,10 +12,12 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import pyarrow.parquet as pq
 from scipy.signal import welch
 
 sys.stdout.reconfigure(line_buffering=True)
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repo root, for iq_codec
+import iq_codec  # noqa: E402
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PARQUET_ROOT = SCRIPT_DIR / ".." / ".." / "DroneDetect_V2_parquet"
@@ -62,11 +64,9 @@ def segment_psd(iq: np.ndarray) -> tuple[np.ndarray, float, float]:
 
 def process_file(pq_path: Path, relative_path: str) -> list[dict]:
     meta = parse_metadata(relative_path)
-    table = pq.read_table(pq_path, columns=["I", "Q"])
-    i = table.column("I").to_numpy(zero_copy_only=False)
-    q = table.column("Q").to_numpy(zero_copy_only=False)
+    i, q = iq_codec.read_iq(pq_path)
     iq = i.astype(np.float32) + 1j * q.astype(np.float32)
-    del table, i, q
+    del i, q
 
     n_segments = len(iq) // SEGMENT_SAMPLES
     rows = []

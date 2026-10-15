@@ -30,17 +30,33 @@
 
 轉換原則：**位元級無損**
 - 讀取整個檔案（不用固定 `count` 截斷，避免丟掉尾端樣本）
-- 不做 z-score normalise，`I`/`Q` 為原始 float32 值
+- 不做 z-score normalise，解碼後的 `I`/`Q` 為原始 float32 值（逐位元相同）
 - `view(np.complex64)` 僅為 bit 重新詮釋，不改變數值
-- 壓縮用 `zstd`（無損，壓縮率優於預設 snappy）
-- 已用 bit-exact 比對驗證：讀回的 `I`/`Q` 與原始 `.dat` 逐位元相同
+- 以 [iq_codec.py](iq_codec.py) 的 block codec 編碼，再由 `zstd`（level 19）壓縮，全程無損
+- 已用 bit-exact 比對驗證：解碼回的 `I`/`Q` 與原始 `.dat` 逐位元相同
 
 ### 2.1 IQ 資料 parquet schema（每個 `.dat` 對應一個 `.parquet`）
 
-| 欄位 | 型別 | 說明 |
+錄製設備是 12-bit ADC，所有 `I`/`Q` 都恰好等於 `k / 2048`（`k` 為整數，實測範圍約 -2059 ~ 2091；390 檔皆如此），所以「共同基準」是全域固定的量化單位 `2048`。DC offset 則因檔而異（均值 1.6 ~ 186 LSB），沒有共同的加法基準。
+
+每個通道每 4096 個 sample 切成一個 block（parquet 的一列），每 256 個 block（1,048,576 samples）為一個 row group。每個 block 取下列兩種表示中離散度較小者：
+
+- **base 模式**：`k - base`，`base` 為該 block 的四捨五入均值
+- **delta 模式**：相鄰差分，block 第一筆從 `first` 起算
+
+殘差再做 zigzag 轉成非負整數，拆成低位元 byte 平面（`lo`）與高位元 byte 平面（`hi`）；窄 block 的 `hi` 全為 0，以 `NULL` 儲存，其餘交給 `zstd` 做 entropy coding。
+
+| 欄位（`c` 為 `I` 或 `Q`） | 型別 | 說明 |
 |---|---|---|
-| `I` | `float32` | In-phase，原始值，未 normalise |
-| `Q` | `float32` | Quadrature，原始值，未 normalise |
+| `{c}_ref` | `int16` | base 模式的基準（delta 模式為 0） |
+| `{c}_first` | `int16` | block 第一筆的 `k`，delta 模式還原用 |
+| `{c}_mode` | `int8` | 0 = base 模式，1 = delta 模式 |
+| `{c}_lo` | `fixed_size_binary(4096)` | zigzag 殘差的低位元 byte |
+| `{c}_hi` | `fixed_size_binary(4096)`，可為 `NULL` | zigzag 殘差的高位元 byte，全為 0 時為 `NULL` |
+
+檔案 metadata 記錄 `iq_codec`（版本字串）與 `iq_samples`（總 sample 數；最後一個 block 以邊緣值補齊，解碼時截掉）。寫入時關閉 parquet 欄位統計（FLBA 的 min/max 會佔掉可觀的 footer 空間）。
+
+**讀取方式**：一律用 `iq_codec.read_iq(path)` 取得 float32 的 `(I, Q)`（需要串流時用 `iq_codec.iter_iq(path)`），不要直接用 `pq.read_table(columns=["I","Q"])`。codec 只接受「恰為 `k / 2048` 的有限值（不含 `-0.0`）」；遇到不符合的資料，ETL 會退回寫成純 float32 的 `I`/`Q` 欄位（仍為 bit-exact），`iq_codec` 兩種格式都能讀。
 
 **不另存 `index` 欄位**：轉換時依原始 `.dat` 的順序寫入，parquet 保留列順序，因此「列位置」本身就是 sample 序號（0-based）。驗證時直接與原始 `.dat` 逐元素比對 `I`/`Q`，順序錯誤必然比對失敗。
 
@@ -61,7 +77,7 @@
 
 - **一張寬表**：靜態分類資訊、分布統計、power 特徵、採集端診斷、資料品質檢查，全部合併成同一張表。原因是這些欄位的粒度完全一致——都是「每個檔案一列」，共 **390 列**，用 `relative_path 作為 primary key，沒必要拆多張表再 join。
 - **db 裡只存 summary，不存原始 IQ**：1.2 億列 × 390 檔的原始 IQ 留在 parquet；build 腳本用 DuckDB `read_parquet()` 掃描 parquet 算聚合，只把聚合結果（390 列）寫進 `.duckdb`。因此 db 檔很小（數百 KB），是純粹的探索／索引摘要層。
-- **探索方便**：BI 工具或 SQL 只查一張 390 列的表，直接 filter/group/pivot，不需要處理 join，也不需要重新掃描 61GB 的 parquet。
+- **探索方便**：BI 工具或 SQL 只查一張 390 列的表，直接 filter/group/pivot，不需要處理 join，也不需要重新掃描 49GB 的 parquet。
 
 ### 3.2 Summary 寬表 schema（`summary`，每檔一列，共 390 列）
 
@@ -170,8 +186,8 @@
 
 verify 與轉換腳本共用同一套來源抽象（直接 import `LoadDataTransferParquet`），ground truth 預設從 **zip 壓縮檔**讀取（也可設 `SOURCE_ZIP=None` 改用已解壓縮的 `.dat` 資料夾）。這讓 verify 的生命週期跟轉換流程一致：解壓的 `.dat` 刪除後、只要 zip 還在（或未來重新下載 zip）都能重驗，不會綁死在會被刪除的 `.dat` 資料夾上。
 
-- **列數比對（全部 390 檔，比對 parquet metadata 列數 vs 來源檔案大小/8）**：390/390 通過，無缺檔、無列數不符
-- **Bit-exact 抽樣比對（隨機 20 檔，逐位元比對 `I`/`Q`）**：20/20 通過
+- **列數與 schema 比對（全部 390 檔，比對 `iq_samples` / parquet 列數 vs 來源檔案大小/8，並檢查欄位為 codec 或純 float32 `I`/`Q`）**：390/390 通過，無缺檔、無列數不符
+- **Bit-exact 抽樣比對（隨機 20 檔，解碼後逐位元比對 `I`/`Q`，順序也一併驗證）**：20/20 通過
 - **結論：轉換完整且無損**，可以放心基於 `DroneDetect_V2_parquet` 進行後續分析
 
 ## 7. 原始 `.dat` 保留政策
@@ -183,10 +199,11 @@ verify 與轉換腳本共用同一套來源抽象（直接 import `LoadDataTrans
 | 路徑 | 進 git？ | 說明 |
 |---|---|---|
 | `load_data_transfer_parquet.py` | ✅ | .dat/zip → parquet 轉換 |
+| `iq_codec.py` | ✅ | IQ parquet 的無損 block codec（編碼 / 解碼 / 讀寫） |
 | `verify_parquet_conversion.py` | ✅ | 無損完整性驗證 |
 | `PARQUET_SCHEMA_DESIGN.md` / `.en.md` | ✅ | 本設計文件（中/英） |
 | `.gitignore` | ✅ | — |
 | `DroneDetect_V2.zip` | ❌ `*.zip` | 70GB 原始壓縮檔 |
 | `DroneDetect_V2/`（`.dat`） | ❌ `*.dat` | 原始資料 |
-| `DroneDetect_V2_parquet/` | ❌ | 轉換後 parquet（約 61GB） |
+| `DroneDetect_V2_parquet/` | ❌ | 轉換後 parquet（約 49GB） |
 | `Summary_duckdb/`（build 腳本 + `.duckdb`） | ❌ | DuckDB summary 層，本地產物 |

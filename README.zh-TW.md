@@ -66,6 +66,7 @@
 
 ```
 load_data_transfer_parquet.py   # .dat -> parquet 無損轉換
+iq_codec.py                     # IQ parquet 的無損 block codec
 verify_parquet_conversion.py    # bit-exact 轉換驗證
 Summary_duckdb/summary.parquet  # 每錄製一列的 390 列 summary 表（進版控）
 EDA/        scripts + results   # summary 特徵的 box plot
@@ -78,7 +79,7 @@ verify/     scripts + results   # 魯棒性、leakage 與模型比較驗證
 
 ### 1. Raw data 轉換（.dat → parquet）
 
-[load_data_transfer_parquet.py](load_data_transfer_parquet.py)——位元級無損：整檔讀取、不做 normalise、`I`/`Q` 保留原始 float32、zstd 壓縮、鏡像原始資料夾結構，可直接從原始 zip 讀取。由 [verify_parquet_conversion.py](verify_parquet_conversion.py) 驗證（全部 390 檔列數比對 + 隨機抽樣 bit-exact 比對，已通過）。詳見 [PARQUET_SCHEMA_DESIGN.md](PARQUET_SCHEMA_DESIGN.md)。
+[load_data_transfer_parquet.py](load_data_transfer_parquet.py)——位元級無損：整檔讀取、不做 normalise、`I`/`Q` 保留原始 float32 數值，以 [iq_codec.py](iq_codec.py) 的 block codec + zstd 儲存（以 `iq_codec.read_iq` 讀取）、鏡像原始資料夾結構，可直接從原始 zip 讀取。由 [verify_parquet_conversion.py](verify_parquet_conversion.py) 驗證（全部 390 檔列數比對 + 隨機抽樣 bit-exact 比對，已通過）。詳見 [PARQUET_SCHEMA_DESIGN.md](PARQUET_SCHEMA_DESIGN.md)。
 
 ### 2. Summary DB 建置（parquet → DuckDB）
 

@@ -30,17 +30,33 @@ Output root: `D:\DroneEDA\DroneDetect_V2_parquet` (mirrors the source folder str
 
 Conversion principle: **bit-exact lossless**
 - Read the entire file (no fixed `count` cap, so no trailing samples are dropped)
-- No z-score normalisation; `I`/`Q` are the raw float32 values
+- No z-score normalisation; decoded `I`/`Q` are the raw float32 values (bit for bit)
 - `view(np.complex64)` is only a byte reinterpretation, values unchanged
-- Compression `zstd` (lossless, better ratio than default snappy)
-- Verified bit-exact: reloaded `I`/`Q` match the original `.dat` byte for byte
+- Encoded with the block codec in [iq_codec.py](iq_codec.py), then compressed with `zstd` (level 19); lossless end to end
+- Verified bit-exact: decoded `I`/`Q` match the original `.dat` byte for byte
 
 ### 2.1 IQ parquet schema (one `.parquet` per `.dat`)
 
-| Column | Type | Description |
+The recorder is a 12-bit ADC: every `I`/`Q` value is exactly `k / 2048` with an integer `k` (observed range about -2059 ~ 2091; true for all 390 files). The common base is therefore the global quantisation step `2048`. The DC offset, by contrast, differs per file (mean 1.6 ~ 186 LSB), so there is no common additive base.
+
+Each channel is cut into blocks of 4096 samples (one parquet row); 256 blocks (1,048,576 samples) form a row group. A block is stored in whichever of two representations has the smaller spread:
+
+- **base mode**: `k - base`, with `base` the rounded block mean
+- **delta mode**: first differences, starting from `first` at the block's first sample
+
+The residuals are zigzag-coded to non-negative integers and split into a low-byte plane (`lo`) and a high-byte plane (`hi`). The `hi` plane of a narrow block is all zero and is stored as `NULL`; `zstd` does the entropy coding of the rest.
+
+| Column (`c` is `I` or `Q`) | Type | Description |
 |---|---|---|
-| `I` | `float32` | In-phase, raw value, not normalised |
-| `Q` | `float32` | Quadrature, raw value, not normalised |
+| `{c}_ref` | `int16` | Base for base mode (0 in delta mode) |
+| `{c}_first` | `int16` | `k` of the block's first sample, used to restore delta mode |
+| `{c}_mode` | `int8` | 0 = base mode, 1 = delta mode |
+| `{c}_lo` | `fixed_size_binary(4096)` | Low bytes of the zigzag residuals |
+| `{c}_hi` | `fixed_size_binary(4096)`, nullable | High bytes of the zigzag residuals; `NULL` when all zero |
+
+File metadata carries `iq_codec` (version string) and `iq_samples` (total sample count; the last block is padded with its edge value and trimmed on decode). Parquet column statistics are disabled on write (FLBA min/max would take a large share of the footer).
+
+**Reading**: always use `iq_codec.read_iq(path)` to get float32 `(I, Q)` (or `iq_codec.iter_iq(path)` to stream), not `pq.read_table(columns=["I","Q"])` directly. The codec accepts only finite values that are exactly `k / 2048` (no `-0.0`); for anything else the ETL falls back to plain float32 `I`/`Q` columns (still bit-exact), and `iq_codec` reads both layouts.
 
 **No separate `index` column**: samples are written in the source `.dat` order and parquet preserves row order, so the row position itself is the 0-based sample index. Verification compares `I`/`Q` element-wise against the source `.dat`, so any reordering fails the check.
 
@@ -61,7 +77,7 @@ On top of the IQ parquet, build a **single DuckDB file** containing **one wide s
 
 - **One wide table**: classification metadata, distribution stats, power features, acquisition diagnostics and data-quality checks are all merged into the same table. These columns share the exact same granularity — one row per file, **390 rows** total — keyed by `relative_path`, so there is no need to split into multiple tables and join.
 - **The db holds only the summary, not the raw IQ**: the 120M-rows × 390-files of raw IQ stay in parquet; the build script uses DuckDB `read_parquet()` to scan the parquet and aggregate, writing only the aggregate result (390 rows) into the `.duckdb`. The db file is therefore tiny (a few hundred KB) — a pure exploration/index summary layer.
-- **Easy exploration**: a BI tool or SQL queries a single 390-row table — filter/group/pivot directly, no joins, no need to rescan 61 GB of parquet.
+- **Easy exploration**: a BI tool or SQL queries a single 390-row table — filter/group/pivot directly, no joins, no need to rescan 49 GB of parquet.
 
 ### 3.2 Summary wide-table schema (`summary`, one row per file, 390 rows)
 
@@ -170,8 +186,8 @@ Verification script: [verify_parquet_conversion.py](verify_parquet_conversion.py
 
 verify shares the same source abstraction as the converter (it imports `LoadDataTransferParquet`), reading ground truth by default from the **zip archive** (set `SOURCE_ZIP=None` to verify against the extracted `.dat` folder). This keeps verify's lifecycle aligned with the conversion flow: after the extracted `.dat` files are deleted, as long as the zip exists (or is re-downloaded later) verification still works — it is not tied to the `.dat` folder that gets deleted.
 
-- **Row-count check (all 390 files, parquet metadata rows vs source size/8)**: 390/390 pass, no missing files, no row mismatches
-- **Bit-exact spot check (20 random files, byte-for-byte `I`/`Q`)**: 20/20 pass
+- **Row-count and schema check (all 390 files: `iq_samples` / parquet rows vs source size/8, and columns must be the codec layout or plain float32 `I`/`Q`)**: 390/390 pass, no missing files, no row mismatches
+- **Bit-exact spot check (20 random files, decoded `I`/`Q` compared byte for byte, order included)**: 20/20 pass
 - **Conclusion: conversion is complete and lossless**, safe to base downstream analysis on `DroneDetect_V2_parquet`
 
 ## 7. Raw `.dat` Retention Policy
@@ -183,10 +199,11 @@ verify shares the same source abstraction as the converter (it imports `LoadData
 | Path | In git? | Notes |
 |---|---|---|
 | `load_data_transfer_parquet.py` | ✅ | .dat/zip → parquet conversion |
+| `iq_codec.py` | ✅ | Lossless block codec for the IQ parquet files (encode / decode / read / write) |
 | `verify_parquet_conversion.py` | ✅ | Lossless integrity verification |
 | `PARQUET_SCHEMA_DESIGN.md` / `.en.md` | ✅ | This design doc (zh/en) |
 | `.gitignore` | ✅ | — |
 | `DroneDetect_V2.zip` | ❌ `*.zip` | 70 GB raw archive |
 | `DroneDetect_V2/` (`.dat`) | ❌ `*.dat` | Raw data |
-| `DroneDetect_V2_parquet/` | ❌ | Converted parquet (~61 GB) |
+| `DroneDetect_V2_parquet/` | ❌ | Converted parquet (~49 GB) |
 | `Summary_duckdb/` (build script + `.duckdb`) | ❌ | DuckDB summary layer, local artifact |

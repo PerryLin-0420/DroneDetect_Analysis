@@ -66,6 +66,7 @@ Total: **390 files**.
 
 ```
 load_data_transfer_parquet.py   # .dat -> parquet lossless conversion
+iq_codec.py                     # lossless block codec for the IQ parquet files
 verify_parquet_conversion.py    # bit-exact conversion verification
 Summary_duckdb/summary.parquet  # 390-row per-recording summary table (committed)
 EDA/        scripts + results   # box plots of summary features
@@ -78,7 +79,7 @@ verify/     scripts + results   # robustness, leakage & model-comparison checks
 
 ### 1. Raw conversion (.dat → parquet)
 
-[load_data_transfer_parquet.py](load_data_transfer_parquet.py) — bit-lossless: full-length reads, no normalisation, raw float32 `I`/`Q`, zstd compression, mirrors the source folder structure. Reads directly from the original zip. Verified by [verify_parquet_conversion.py](verify_parquet_conversion.py) (row counts + random bit-exact sampling on all 390 files, passed). See [PARQUET_SCHEMA_DESIGN.en.md](PARQUET_SCHEMA_DESIGN.en.md).
+[load_data_transfer_parquet.py](load_data_transfer_parquet.py) — bit-lossless: full-length reads, no normalisation, raw float32 `I`/`Q` values, stored with the block codec in [iq_codec.py](iq_codec.py) + zstd (read via `iq_codec.read_iq`), mirrors the source folder structure. Reads directly from the original zip. Verified by [verify_parquet_conversion.py](verify_parquet_conversion.py) (row counts + random bit-exact sampling on all 390 files, passed). See [PARQUET_SCHEMA_DESIGN.en.md](PARQUET_SCHEMA_DESIGN.en.md).
 
 ### 2. Summary DB (parquet → DuckDB)
 

@@ -39,9 +39,10 @@
 
 | 欄位 | 型別 | 說明 |
 |---|---|---|
-| `index` | `int64` | 該 sample 在原始檔案中的順序（0-based），用於還原時間順序 |
 | `I` | `float32` | In-phase，原始值，未 normalise |
 | `Q` | `float32` | Quadrature，原始值，未 normalise |
+
+**不另存 `index` 欄位**：轉換時依原始 `.dat` 的順序寫入，parquet 保留列順序，因此「列位置」本身就是 sample 序號（0-based）。驗證時直接與原始 `.dat` 逐元素比對 `I`/`Q`，順序錯誤必然比對失敗。
 
 ### 2.2 來源支援：資料夾 或 zip 壓縮檔
 
@@ -60,7 +61,7 @@
 
 - **一張寬表**：靜態分類資訊、分布統計、power 特徵、採集端診斷、資料品質檢查，全部合併成同一張表。原因是這些欄位的粒度完全一致——都是「每個檔案一列」，共 **390 列**，用 `relative_path 作為 primary key，沒必要拆多張表再 join。
 - **db 裡只存 summary，不存原始 IQ**：1.2 億列 × 390 檔的原始 IQ 留在 parquet；build 腳本用 DuckDB `read_parquet()` 掃描 parquet 算聚合，只把聚合結果（390 列）寫進 `.duckdb`。因此 db 檔很小（數百 KB），是純粹的探索／索引摘要層。
-- **探索方便**：BI 工具或 SQL 只查一張 390 列的表，直接 filter/group/pivot，不需要處理 join，也不需要重新掃描 116GB 的 parquet。
+- **探索方便**：BI 工具或 SQL 只查一張 390 列的表，直接 filter/group/pivot，不需要處理 join，也不需要重新掃描 61GB 的 parquet。
 
 ### 3.2 Summary 寬表 schema（`summary`，每檔一列，共 390 列）
 
@@ -187,5 +188,5 @@ verify 與轉換腳本共用同一套來源抽象（直接 import `LoadDataTrans
 | `.gitignore` | ✅ | — |
 | `DroneDetect_V2.zip` | ❌ `*.zip` | 70GB 原始壓縮檔 |
 | `DroneDetect_V2/`（`.dat`） | ❌ `*.dat` | 原始資料 |
-| `DroneDetect_V2_parquet/` | ❌ | 轉換後 parquet（116GB） |
+| `DroneDetect_V2_parquet/` | ❌ | 轉換後 parquet（約 61GB） |
 | `Summary_duckdb/`（build 腳本 + `.duckdb`） | ❌ | DuckDB summary 層，本地產物 |

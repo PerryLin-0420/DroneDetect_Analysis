@@ -39,9 +39,10 @@ Conversion principle: **bit-exact lossless**
 
 | Column | Type | Description |
 |---|---|---|
-| `index` | `int64` | Sample order within the original file (0-based); restores time order |
 | `I` | `float32` | In-phase, raw value, not normalised |
 | `Q` | `float32` | Quadrature, raw value, not normalised |
+
+**No separate `index` column**: samples are written in the source `.dat` order and parquet preserves row order, so the row position itself is the 0-based sample index. Verification compares `I`/`Q` element-wise against the source `.dat`, so any reordering fails the check.
 
 ### 2.2 Source support: folder or zip archive
 
@@ -60,7 +61,7 @@ On top of the IQ parquet, build a **single DuckDB file** containing **one wide s
 
 - **One wide table**: classification metadata, distribution stats, power features, acquisition diagnostics and data-quality checks are all merged into the same table. These columns share the exact same granularity — one row per file, **390 rows** total — keyed by `relative_path`, so there is no need to split into multiple tables and join.
 - **The db holds only the summary, not the raw IQ**: the 120M-rows × 390-files of raw IQ stay in parquet; the build script uses DuckDB `read_parquet()` to scan the parquet and aggregate, writing only the aggregate result (390 rows) into the `.duckdb`. The db file is therefore tiny (a few hundred KB) — a pure exploration/index summary layer.
-- **Easy exploration**: a BI tool or SQL queries a single 390-row table — filter/group/pivot directly, no joins, no need to rescan 116 GB of parquet.
+- **Easy exploration**: a BI tool or SQL queries a single 390-row table — filter/group/pivot directly, no joins, no need to rescan 61 GB of parquet.
 
 ### 3.2 Summary wide-table schema (`summary`, one row per file, 390 rows)
 
@@ -187,5 +188,5 @@ verify shares the same source abstraction as the converter (it imports `LoadData
 | `.gitignore` | ✅ | — |
 | `DroneDetect_V2.zip` | ❌ `*.zip` | 70 GB raw archive |
 | `DroneDetect_V2/` (`.dat`) | ❌ `*.dat` | Raw data |
-| `DroneDetect_V2_parquet/` | ❌ | Converted parquet (116 GB) |
+| `DroneDetect_V2_parquet/` | ❌ | Converted parquet (~61 GB) |
 | `Summary_duckdb/` (build script + `.duckdb`) | ❌ | DuckDB summary layer, local artifact |

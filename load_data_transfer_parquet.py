@@ -68,8 +68,9 @@ class LoadDataTransferParquet:
 
     def transfer_data(self, data: np.ndarray) -> pd.DataFrame:
         try:
+            # no explicit index column: samples are written in source order and parquet
+            # preserves row order, so the row position itself is the sample index
             df = pd.DataFrame({
-                'index': np.arange(len(data), dtype=np.int64), # preserves sample order for later time-based analysis
                 'I': data.real,
                 'Q': data.imag,
             })

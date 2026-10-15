@@ -19,6 +19,8 @@ SRC_FOLDER = Path("D:/DroneEDA/DroneDetect_V2/DroneDetect_V2")
 OUT = Path("D:/DroneEDA/DroneDetect_V2_parquet")
 SAMPLE_SIZE = 20
 SEED = 42
+# row order is the sample order, so the schema is just the two float32 channels
+EXPECTED_COLUMNS = ["I", "Q"]
 
 
 def build_source_sizes(loader: LoadDataTransferParquet) -> dict[str, int]:
@@ -38,19 +40,23 @@ def build_source_sizes(loader: LoadDataTransferParquet) -> dict[str, int]:
 
 def fast_pass(loader, relative_paths, source_sizes):
     # complex64 = 8 bytes/sample (4 bytes I + 4 bytes Q)
-    missing, mismatches, ok = [], [], 0
+    missing, mismatches, schema_bad, ok = [], [], [], 0
     for rel in relative_paths:
         out = loader.resolve_output_path(rel)
         if not out.exists():
             missing.append(rel)
             continue
         expected = source_sizes[rel] // 8
-        actual = pq.ParquetFile(out).metadata.num_rows
+        pf = pq.ParquetFile(out)
+        actual = pf.metadata.num_rows
         if actual != expected:
             mismatches.append((rel, expected, actual))
+        elif pf.schema_arrow.names != EXPECTED_COLUMNS:
+            # e.g. legacy files that still carry the redundant `index` column
+            schema_bad.append((rel, pf.schema_arrow.names))
         else:
             ok += 1
-    return ok, missing, mismatches
+    return ok, missing, mismatches, schema_bad
 
 
 def bit_exact_check(loader, relative_path) -> bool:
@@ -60,16 +66,14 @@ def bit_exact_check(loader, relative_path) -> bool:
     I_truth, Q_truth = raw[0::2], raw[1::2]
 
     out = loader.resolve_output_path(relative_path)
-    df = pq.read_table(out, columns=["index", "I", "Q"]).to_pandas()
+    df = pq.read_table(out, columns=["I", "Q"]).to_pandas()
 
-    index_ok = (
-        df["index"].iloc[0] == 0
-        and df["index"].iloc[-1] == len(df) - 1
-        and df["index"].is_monotonic_increasing
-    )
-    I_ok = np.array_equal(df["I"].to_numpy(), I_truth)
-    Q_ok = np.array_equal(df["Q"].to_numpy(), Q_truth)
-    return index_ok and I_ok and Q_ok
+    # element-wise comparison against the source also proves sample order: the row
+    # position is the sample index, so any reordering would fail these checks.
+    # compare as uint32 bit patterns so NaN payloads / -0.0 are verified bit-exact too
+    I_ok = np.array_equal(df["I"].to_numpy().view(np.uint32), I_truth.view(np.uint32))
+    Q_ok = np.array_equal(df["Q"].to_numpy().view(np.uint32), Q_truth.view(np.uint32))
+    return I_ok and Q_ok
 
 
 def main():
@@ -84,13 +88,15 @@ def main():
     print(f"Ground-truth source: {source_desc}")
     print(f"Total .dat files: {len(relative_paths)}")
 
-    print("\n=== Pass 1: row-count check (metadata only, all files) ===")
-    ok, missing, mismatches = fast_pass(loader, relative_paths, source_sizes)
-    print(f"OK: {ok} | Missing parquet: {len(missing)} | Row mismatches: {len(mismatches)}")
+    print("\n=== Pass 1: row-count + schema check (metadata only, all files) ===")
+    ok, missing, mismatches, schema_bad = fast_pass(loader, relative_paths, source_sizes)
+    print(f"OK: {ok} | Missing parquet: {len(missing)} | Row mismatches: {len(mismatches)} | Schema mismatches: {len(schema_bad)}")
     for rel in missing:
         print(f"  MISSING PARQUET: {rel}")
     for rel, expected, actual in mismatches:
         print(f"  ROW MISMATCH: {rel} expected={expected} actual={actual}")
+    for rel, names in schema_bad:
+        print(f"  SCHEMA MISMATCH: {rel} columns={names} expected={EXPECTED_COLUMNS}")
 
     print(f"\n=== Pass 2: bit-exact spot check ({SAMPLE_SIZE} random files) ===")
     rng = random.Random(SEED)
@@ -104,8 +110,9 @@ def main():
         print(f"  [{i}/{len(sample)}] {status}: {rel}")
 
     print("\n=== Summary ===")
-    all_ok = not missing and not mismatches and fail_count == 0
+    all_ok = not missing and not mismatches and not schema_bad and fail_count == 0
     print(f"Row-count check: {'PASS' if not missing and not mismatches else 'FAIL'}")
+    print(f"Schema check: {'PASS' if not schema_bad else f'FAIL ({len(schema_bad)} files)'}")
     print(f"Bit-exact spot check: {'PASS' if fail_count == 0 else f'FAIL ({fail_count} files)'}")
     print("OVERALL:", "LOSSLESS / COMPLETE" if all_ok else "ISSUES FOUND — see above")
 
